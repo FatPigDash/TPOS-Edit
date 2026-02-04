@@ -1,0 +1,732 @@
+/* src/styles.css */
+
+/* [關鍵修正] 全域盒模型設定 */
+/* 這行能確保 padding 不會把元素撐大超過 100%, 讓捲軸能正確出現在視窗內 */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+:root {
+    --sidebar-width: 320px;
+    --bg-color: #f5f5f5;
+    --text-color: #333;
+    --border-color: #ddd;
+    --primary-color: #007bff;
+    --danger-color: #dc3545;
+    --drag-overlay-color: rgba(0, 123, 255, 0.1);
+    --group-bg: #ebecf0;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Times New Roman", "Biaukai", sans-serif;
+    font-size: 16px;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+    /* 防止整個 Body 出現捲軸 */
+}
+
+#root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 頂部導航列 */
+.navbar {
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    height: 50px;
+    background-color: #fff;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.nav-title {
+    font-weight: bold;
+    font-size: 1.2rem;
+    margin-right: 32px;
+}
+
+.nav-tabs {
+    display: flex;
+    gap: 8px;
+    flex-grow: 1;
+}
+
+.nav-btn {
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    background: none;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.nav-btn:hover {
+    background-color: #eee;
+}
+
+.nav-btn.active {
+    background-color: #e6f0ff;
+    color: var(--primary-color);
+    font-weight: bold;
+}
+
+.nav-actions {
+    margin-left: auto;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+}
+
+.btn-ghost {
+    background: none;
+    border: none;
+    color: #666;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.btn-ghost:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+    color: #333;
+}
+
+/* 主內容區域 */
+.main-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    /* 父層截斷溢出, 確保捲軸只出現在子層 */
+    position: relative;
+    width: 100%;
+    height: 100%;
+    /* 確保繼承高度 */
+}
+
+/* 左側邊欄 */
+.sidebar {
+    width: var(--sidebar-width);
+    background-color: #fff;
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.filter-group {
+    margin-bottom: 16px;
+}
+
+.filter-label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: bold;
+}
+
+.filter-input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 16px;
+}
+
+.filter-help {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+}
+
+.sidebar-actions {
+    margin-top: auto;
+    display: flex;
+    gap: 10px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+}
+
+.btn-block {
+    flex: 1;
+    padding: 8px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.btn-block:hover {
+    background-color: #f0f0f0;
+}
+
+/* 編輯模式樣式 */
+.editor-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.editor-gallery.drag-over {
+    background-color: var(--drag-overlay-color);
+    border-color: var(--primary-color);
+    border-style: dashed;
+}
+
+.main-preview {
+    width: 100%;
+    flex: 1;
+    min-height: 300px;
+    background-color: #222;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #ddd;
+    position: relative;
+}
+
+.main-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.thumbnail-list {
+    display: grid;
+    /* 縮圖網格設定: 固定寬度 160px, 自動填滿 */
+    grid-template-columns: repeat(auto-fill, 160px);
+    gap: 10px;
+    /* 移除固定高度, 改為自適應或填滿剩餘空間 */
+    height: auto;
+    flex: 1;
+    /* 讓它佔據剩餘空間 */
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 4px;
+    align-content: start;
+    border-top: 1px solid #eee;
+    padding-top: 12px;
+}
+
+.thumbnail-item {
+    aspect-ratio: 1;
+    /* 預設 1:1, 但會被 inline-style 覆蓋 */
+    background: #eee;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    border: 3px solid transparent;
+    position: relative;
+}
+
+.thumbnail-item.draggable {
+    cursor: grab;
+}
+
+.thumbnail-item.draggable:active {
+    cursor: grabbing;
+}
+
+.thumbnail-item.dragging {
+    opacity: 0.4;
+    border: 2px dashed #999;
+}
+
+.thumbnail-item.active {
+    border-color: var(--primary-color);
+}
+
+.thumbnail-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* 確保填滿且裁切 */
+    pointer-events: none;
+}
+
+.thumbnail-item:hover .delete-btn {
+    display: flex;
+}
+
+.delete-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: rgba(220, 53, 69, 1);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    cursor: pointer;
+    z-index: 10;
+}
+
+/* 右側內容與卡片 */
+.content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    overflow-y: auto;
+    background-color: #fff;
+}
+
+.content-header {
+    margin-bottom: 24px;
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 16px;
+}
+
+.result-info {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+.editor-form {
+    width: 100%;
+}
+
+.editor-form .filter-group {
+    margin-bottom: 20px;
+}
+
+.card-grid {
+    display: grid;
+    /* 保持最小寬度為 450px */
+    grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+    gap: 20px;
+    padding-bottom: 16px;
+}
+
+.work-card {
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    transition: transform 0.2s;
+    /* 高度自適應, 由內容撐開 */
+    height: auto;
+    /* 關鍵修改: 限制最大寬度為 450px, 並居中 */
+    max-width: 450px;
+    margin: 0 auto;
+    width: 100%;
+    /* 確保在小於 450px 的容器中也能正常顯示 */
+}
+
+.work-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.card-cover {
+    width: 100%;
+    height: 250px;
+    /* 固定高度 250px */
+    background-color: #eee;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    overflow: hidden;
+    /* 確保圖片不溢出 */
+}
+
+.card-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* 填滿並長邊裁切 */
+}
+
+.card-info {
+    padding: 12px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-id {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+.card-title {
+    font-weight: bold;
+    font-size: 16px;
+    /* 確保字體大小 */
+    line-height: 1.4;
+    /* 行高, 確保兩行高度計算準確 */
+    /* 兩行省略設定 */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* 固定高度以保持卡片整齊, 2行 * 1.4em 約等於 2.8em */
+    max-height: 2.8em;
+}
+
+/* 演員卡片 (繼承 work-card 但微調) */
+.actor-card {
+    /* 演員卡片可能不需要限制最大寬度為 450px, 可以覆寫回來或保持自適應 */
+    /* 這裡保持與 work-card 相似的 grid 行為, 但為了美觀可能不需要 max-width */
+    max-width: none;
+}
+
+.actor-card .card-cover {
+    height: 180px;
+    /* 演員卡片保持原高度或依需求調整 */
+}
+
+/* --- [關鍵區塊] 標籤系統 (Kanban Board) --- */
+.tag-board {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    /* 強制不換行, 確保水平排列 */
+    align-items: flex-start;
+    /* 捲動設定 */
+    overflow-x: auto;
+    /* 內容超出寬度時顯示水平捲軸 */
+    overflow-y: hidden;
+    /* 隱藏垂直捲軸 (內容在 group 內捲動) */
+    /* 尺寸設定 */
+    width: 100%;
+    height: 100%;
+    padding: 24px;
+    /* 因為有 border-box, padding 不會把捲軸擠出畫面外 */
+    gap: 24px;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    /* Flex item 設定 */
+    flex: 1;
+    min-width: 0;
+}
+
+/* 美化水平捲動軸 - 確保高度足夠 */
+.tag-board::-webkit-scrollbar {
+    height: 16px;
+}
+
+/* 稍微加高捲軸感應區 */
+.tag-board::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 4px solid transparent;
+    background-clip: content-box;
+}
+
+.tag-board::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.tag-group {
+    /* 固定寬度, 禁止壓縮, 確保會撐開父容器 */
+    flex: 0 0 280px;
+    width: 280px;
+    background-color: var(--group-bg);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+}
+
+.tag-group-header {
+    padding: 12px 16px;
+    font-weight: bold;
+    font-size: 1.1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: grab;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.tag-group-header:active {
+    cursor: grabbing;
+}
+
+.tag-list {
+    flex: 1;
+    overflow-y: auto;
+    /* 標籤列表垂直捲動 */
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 50px;
+}
+
+.tag-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tag-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+}
+
+.tag-item {
+    background-color: #fff;
+    padding: 10px;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    cursor: grab;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 15px;
+    border-bottom: 2px solid transparent;
+}
+
+.tag-item:hover {
+    background-color: #fafafa;
+    border-bottom-color: #ddd;
+}
+
+.tag-item:active {
+    cursor: grabbing;
+}
+
+.tag-item.dragging {
+    opacity: 0.5;
+    background: #e0e0e0;
+    border: 1px dashed #999;
+}
+
+.tag-group.dragging {
+    opacity: 0.5;
+    transform: rotate(2deg);
+}
+
+.add-btn-area {
+    padding: 8px;
+    margin-top: auto;
+}
+
+/* 新增組別按鈕 - 確保它也不會被壓縮 */
+.add-group-btn {
+    flex: 0 0 280px;
+    min-width: 280px;
+    padding: 12px;
+    border: 2px dashed rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    color: #555;
+    background: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    text-align: center;
+    font-weight: bold;
+    margin-right: 24px;
+    /* 右側留白, 避免貼齊視窗邊緣太緊 */
+}
+
+.add-group-btn:hover {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #666;
+}
+
+.quick-input {
+    width: 100%;
+    padding: 8px;
+    border: 2px solid var(--primary-color);
+    border-radius: 4px;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background-color: #fff;
+    padding: 24px;
+    border-radius: 8px;
+    min-width: 300px;
+    max-width: 90%;
+    max-height: 90%;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    font-size: 1.25rem;
+    font-weight: bold;
+}
+
+.modal-footer {
+    margin-top: 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Spinner Animation */
+.spinner {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 膠囊標籤樣式 (Actor Selector) */
+.pills-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+    /* 確保頂部對齊 */
+}
+
+.pill {
+    background-color: #e3f2fd;
+    color: #0d47a1;
+    border-radius: 16px;
+    padding: 4px 12px;
+    font-size: 14px;
+    display: inline-flex;
+    /* 修改: 使用 inline-flex 讓其適應內容 */
+    align-items: center;
+    gap: 6px;
+    /* 關鍵: 強制寬度不佔滿 */
+    width: fit-content;
+    max-width: 100%;
+    /* 防止溢出容器 */
+    flex: 0 1 auto;
+    /* 設定 flex 屬性: 不放大, 可縮小, 基礎大小自動 */
+    font-weight: bold;
+    white-space: nowrap;
+    /* 防止文字換行 */
+}
+
+.pill button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    color: inherit;
+    opacity: 0.6;
+}
+
+.pill button:hover {
+    opacity: 1;
+}
+
+/* Tag Selector Chips */
+.tag-selector-container {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #eee;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+.tag-selector-group {
+    margin-bottom: 12px;
+}
+
+.group-title {
+    font-weight: bold;
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+.tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tag-chip {
+    padding: 4px 10px;
+    border: 1px solid #ddd;
+    border-radius: 16px;
+    font-size: 13px;
+    cursor: pointer;
+    background-color: #fff;
+    display: inline-flex;
+    /* 修改: 確保與 pill 行為一致 */
+    align-items: center;
+    user-select: none;
+    width: fit-content;
+    /* 修改: 確保自適應寬度 */
+    flex: 0 1 auto;
+}
+
+.tag-chip:hover {
+    background-color: #f5f5f5;
+}
+
+.tag-chip.selected {
+    background-color: #e3f2fd;
+    border-color: #2196F3;
+    color: #0d47a1;
+}

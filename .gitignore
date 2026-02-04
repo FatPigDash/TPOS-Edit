@@ -1,0 +1,8 @@
+node_modules/
+win-unpacked/
+dist/
+release/
+*.exe
+*.zip
+*.7z
+.DS_Store
