@@ -19,7 +19,7 @@ const {
 
 // 6. 演員系統元件 (Actor System)
 
-function ActorCard({ actor, onEdit, onDelete, onImageClick, onToggleFavorite }) {
+function ActorCard({ actor, onEdit, onDelete, onImageClick, onToggleFavorite, onSearch }) {
     const [showMenu, setShowMenu] = React.useState(false);
     const menuRef = React.useRef(null);
     const [imageError, setImageError] = React.useState(false);
@@ -68,7 +68,12 @@ function ActorCard({ actor, onEdit, onDelete, onImageClick, onToggleFavorite }) 
             </div>
             <div className="card-info">
                 <div className="card-title" title=${actor.name}>${actor.name}</div>
-                <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>作品: ${actor.work_count || 0}部</div>
+                <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>作品: ${actor.work_count || 0}部</span>
+                    <button className="btn-ghost" title="搜尋此演員作品" style=${{ padding: '2px 4px', height: 'auto', display: 'flex', alignItems: 'center' }} onClick=${(e) => { e.stopPropagation(); onSearch(actor); }}>
+                        <${Search} size=${14} color="#007bff" />
+                    </button>
+                </div>
                 <div style=${{ marginTop: '4px', cursor: 'pointer', display: 'inline-block' }} onClick=${(e) => { e.stopPropagation(); onToggleFavorite(actor.id, actor.is_favorite); }}>
                     <${Star} size=${16} fill=${actor.is_favorite ? "#fbc02d" : "none"} color=${actor.is_favorite ? "#fbc02d" : "#ccc"} />
                 </div>
@@ -211,7 +216,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
         <//>`;
 }
 
-function ActorSystem({ setIsLoading }) {
+function ActorSystem({ setIsLoading, onNavigateToWork }) {
     const ITEMS_PER_PAGE = 24;
     const [actors, setActors] = React.useState([]);
     // 新增 isFavorite 篩選條件
@@ -368,7 +373,7 @@ function ActorSystem({ setIsLoading }) {
                     </div>
                 </div>
                 <div className="card-grid" style=${{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-                    ${actors.map(actor => html`<${ActorCard} key=${actor.id} actor=${actor} onEdit=${(id) => { setEditingActorId(id); setIsModalOpen(true); }} onDelete=${handleDelete} onImageClick=${(src) => setViewingImage(src)} onToggleFavorite=${handleToggleFavorite} />`)}
+                    ${actors.map(actor => html`<${ActorCard} key=${actor.id} actor=${actor} onEdit=${(id) => { setEditingActorId(id); setIsModalOpen(true); }} onDelete=${handleDelete} onImageClick=${(src) => setViewingImage(src)} onToggleFavorite=${handleToggleFavorite} onSearch=${onNavigateToWork} />`)}
                 </div>
                 <div style=${{ marginTop: 'auto', borderTop: '1px solid #eee' }}>
                     <${Pagination} currentPage=${currentPage} totalPages=${totalPages} onPageChange=${p => setCurrentPage(p)} />

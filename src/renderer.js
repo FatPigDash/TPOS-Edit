@@ -144,11 +144,25 @@ function App() {
         setAppliedFilters(empty);
     };
 
+    // 新增: 處理從演員列表快速跳轉至作品搜尋
+    const handleActorQuickSearch = (actor) => {
+        const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
+        const newFilters = { 
+            name: "", code: "", director: "", maker: "", publisher: "", rating: "", 
+            actor: actorFilter, tags: [] 
+        };
+        // 同步更新 UI 與 Applied，確保切換後立刻搜尋
+        setUiFilters(newFilters);
+        setAppliedFilters(newFilters);
+        setActiveTab('works');
+        setViewMode('list');
+    };
+
     return html`
         <${LoadingOverlay} show=${isLoading} />
         <div style=${{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
             <div className="navbar">
-                <div className="nav-title">The Pile of Shame (V2.0.0)</div>
+                <div className="nav-title">The Pile of Shame (V1.4.0)</div>
                 <div className="nav-tabs">
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
@@ -178,7 +192,7 @@ function App() {
                             </div>
                         </div>
                     </div>`
-                ) : activeTab === 'tags' ? html`<${TagSystem} />` : html`<${ActorSystem} setIsLoading=${setIsLoading} />`}
+                ) : activeTab === 'tags' ? html`<${TagSystem} />` : html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />`}
             </div>
         </div>`;
 }
