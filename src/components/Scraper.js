@@ -38,6 +38,7 @@ async function openJavScraperWindow(keyword) {
     win.webContents.on('did-finish-load', async () => {
         try {
             await win.webContents.executeJavaScript(`
+                // 1. 注入抓取按鈕 (右下角)
                 if (!document.getElementById('tpos-grab-btn')) {
                     const btn = document.createElement('div');
                     btn.id = 'tpos-grab-btn';
@@ -52,9 +53,41 @@ async function openJavScraperWindow(keyword) {
                     };
                     document.body.appendChild(btn);
                 }
+
+                // 2. 注入回上一頁按鈕 (左下角)
+                if (!document.getElementById('tpos-back-btn')) {
+                    const backBtn = document.createElement('div');
+                    backBtn.id = 'tpos-back-btn';
+                    backBtn.innerHTML = '⬅ 回上一頁';
+                    backBtn.style.cssText = 'position: fixed; bottom: 30px; left: 30px; z-index: 2147483647; background: #6c757d; color: white; padding: 15px 30px; border-radius: 50px; cursor: pointer; font-family: sans-serif; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.4); font-size: 18px; transition: all 0.2s; border: 2px solid white;';
+                    backBtn.onmouseover = () => { backBtn.style.transform = 'scale(1.05)'; backBtn.style.background = '#5a6268'; };
+                    backBtn.onmouseout = () => { backBtn.style.transform = 'scale(1)'; backBtn.style.background = '#6c757d'; };
+                    backBtn.onclick = function() {
+                        window.history.back();
+                    };
+                    document.body.appendChild(backBtn);
+                }
+
+                // 3. 自動偵測與點擊邏輯 (延遲 1 秒執行以確保 DOM 穩定)
+                setTimeout(() => {
+                    var titleEl = document.getElementById('video_title');
+                    var btn = document.getElementById('tpos-grab-btn');
+                    
+                    // 檢查: 1.有標題元素 2.有按鈕 3.尚未觸發過 4.不是 Cloudflare 驗證頁
+                    if (titleEl && btn && document.title.indexOf('TPOS_GRAB_ACTION') === -1 && document.title.indexOf('Just a moment') === -1) {
+                         // 簡單驗證標題內容是否存在
+                         var titleText = titleEl.innerText || "";
+                         if (titleText.trim().length > 0) {
+                             console.log("TPOS: Auto-clicking grab button...");
+                             btn.innerHTML = '自動讀取中...';
+                             btn.style.background = '#17a2b8'; // 變成藍色提示自動讀取
+                             btn.click();
+                         }
+                    }
+                }, 1000);
             `);
         } catch (e) {
-            console.error("注入按鈕失敗", e);
+            console.error("注入腳本失敗", e);
         }
     });
 
@@ -220,8 +253,9 @@ function ScraperModal({ defaultUrl, onConfirm, onClose }) {
                             <p>2. 如遇驗證畫面, 請手動點擊通過。</p>
                             <p>3. 確認進入作品頁面後, 您可以:</p>
                             <ul style=${{ paddingLeft: '20px', margin: '4px 0' }}>
-                                <li>點擊瀏覽器內的<b style=${{ color: '#28a745' }}>綠色懸浮按鈕</b></li>
-                                <li>或是點擊下方【強制讀取】按鈕</li>
+                                <li>系統將自動偵測作品頁面並<b style=${{ color: '#17a2b8' }}>自動讀取</b></li>
+                                <li>若無反應, 請點擊<b style=${{ color: '#28a745' }}>綠色懸浮按鈕</b></li>
+                                <li>若遇到廣告頁面, 請點擊<b style=${{ color: '#6c757d' }}>回上一頁</b>按鈕</li>
                             </ul>
                         </div>
                     </div>
@@ -233,7 +267,7 @@ function ScraperModal({ defaultUrl, onConfirm, onClose }) {
                     <div className="modal-body" style=${{ padding: '20px 0', textAlign: 'center' }}>
                         <div style=${{ marginBottom: '20px' }}><div className="spinner" style=${{ margin: '0 auto 10px auto' }}><${Loader2} size=${32} className="spin-anim" color="#2196F3" /></div></div>
                         <div style=${{ fontWeight: 'bold', color: '#2196F3' }}>瀏覽器已開啟...</div>
-                        <p style=${{ fontWeight: 'bold', color: '#28a745' }}>請點擊網頁右下角的【確認並讀取資料】按鈕</p>
+                        <p style=${{ fontWeight: 'bold', color: '#28a745' }}>請等待自動讀取，或手動點擊按鈕</p>
                         <p style=${{ fontSize: '12px', color: '#999', marginTop: '8px' }}>如果網頁按鈕沒出現, 您也可以點擊下方的按鈕:</p>
                         ${statusMsg && html`<div style=${{ color: '#dc3545', marginTop: '10px', fontWeight: 'bold' }}>${statusMsg}</div>`}
                     </div>
