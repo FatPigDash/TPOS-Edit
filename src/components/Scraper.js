@@ -35,6 +35,12 @@ async function openJavScraperWindow(keyword) {
         }
     });
 
+    // 新增: 攔截並封鎖所有彈出式視窗 (廣告/惡意跳轉)
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        // 直接拒絕開啟新視窗
+        return { action: 'deny' };
+    });
+
     win.webContents.on('did-finish-load', async () => {
         try {
             await win.webContents.executeJavaScript(`
@@ -87,7 +93,7 @@ async function openJavScraperWindow(keyword) {
                 }, 1000);
             `);
         } catch (e) {
-            console.error("注入腳本失敗", e);
+            console.error("注入按鈕失敗", e);
         }
     });
 

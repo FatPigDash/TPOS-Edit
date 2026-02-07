@@ -344,11 +344,24 @@ function WorkDetails({ workId, onBack, onEdit }) {
         if (!db) return;
         try {
             setWork(db.prepare('SELECT * FROM works WHERE id=?').get(workId));
-            setImages(db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(workId).map(row => ({
+            
+            // 修正: 讀取圖片後，主動將預覽索引設為封面圖片 (isCover=1)
+            const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(workId).map(row => ({
                 id: row.id,
                 url: getFileUrl(path.join(worksImgDir, row.file_name)),
                 isCover: row.is_cover === 1
-            })));
+            }));
+            
+            setImages(loadedImages);
+            
+            // 自動查找封面索引
+            const coverIndex = loadedImages.findIndex(img => img.isCover);
+            if (coverIndex !== -1) {
+                setPreviewIndex(coverIndex);
+            } else {
+                setPreviewIndex(0);
+            }
+
             setLinkedActors(db.prepare(`SELECT CASE WHEN wal.actor_id IS NOT NULL THEN a.name ELSE wal.actor_name END as name, a.image_path, a.actor_number, CASE WHEN a.is_deleted = 0 THEN wal.actor_id ELSE NULL END as actor_id FROM work_actor_link wal LEFT JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = ? ORDER BY wal.sort_order ASC`).all(workId));
             setLinkedTags(db.prepare(`SELECT t.id, t.name, t.color, tg.name as group_name, tg.color as group_color FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(workId));
         } catch (err) { console.error(err); }
@@ -519,7 +532,10 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
     const handleDropUpload = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); if (e.dataTransfer.files.length > 0) processNewFiles(e.dataTransfer.files); };
     const handleSortDrop = (e, targetIndex) => {
-        e.preventDefault(); if (draggingIndex === null || draggingIndex === targetIndex) return;
+        // 修正: 增加 stopPropagation 防止事件冒泡導致與上傳邏輯衝突
+        e.preventDefault(); 
+        e.stopPropagation(); 
+        if (draggingIndex === null || draggingIndex === targetIndex) return;
         setImages(prev => { const newList = [...prev]; const [moved] = newList.splice(draggingIndex, 1); newList.splice(targetIndex, 0, moved); return newList; });
         setDraggingIndex(null);
     };
@@ -621,18 +637,21 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         });
                     }
 
-                    let currentMaxSeq = 0;
+                    // 修正: 移除 currentMaxSeq 的計數器依賴，避免與現有檔案衝突
                     const insertImg = db.prepare('INSERT INTO work_images (work_id, file_name, sort_order, is_cover) VALUES (?, ?, ?, ?)');
                     const updateImg = db.prepare('UPDATE work_images SET sort_order = ?, is_cover = ? WHERE id = ?');
 
                     images.forEach((img, idx) => {
                         const isCover = idx === 0 ? 1 : 0;
-                        if (img.isStored) updateImg.run(idx + 1, isCover, img.dbId);
-                        else {
-                            currentMaxSeq++;
+                        if (img.isStored) {
+                            updateImg.run(idx + 1, isCover, img.dbId);
+                        } else {
+                            // 修正: 改用時間戳記+亂數命名，確保檔案名稱唯一，絕對不會覆蓋舊檔
                             const ext = path.extname(img.filePath);
-                            const seq = String(currentMaxSeq).padStart(3, '0');
-                            const newName = `works_${formData.work_number}_${seq}${ext}`;
+                            const timestamp = Date.now();
+                            const randomSuffix = Math.floor(Math.random() * 10000);
+                            const newName = `works_${formData.work_number}_${timestamp}_${randomSuffix}${ext}`;
+                            
                             fs.copyFileSync(img.filePath, path.join(worksImgDir, newName));
                             insertImg.run(workId, newName, idx + 1, isCover);
                         }

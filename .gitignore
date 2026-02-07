@@ -7,3 +7,4 @@ release/
 *.7z
 .DS_Store
 data/
+user_images/
