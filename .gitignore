@@ -6,5 +6,5 @@ release/
 *.zip
 *.7z
 .DS_Store
-data/
+data/*.sqlite
 user_images/

@@ -191,10 +191,10 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                     <input className="filter-input" value=${name} onInput=${e => setName(e.target.value)} placeholder="輸入姓名..." />
                 </div>
                 <div className="filter-group">
-                    <label className="filter-label">我的最愛</label>
+                    <label className="filter-label">關注演員</label>
                     <div style=${{ cursor: 'pointer', display: 'inline-block' }} onClick=${() => setIsFavorite(isFavorite ? 0 : 1)}>
                         <${Star} size=${24} fill=${isFavorite ? "#fbc02d" : "none"} color=${isFavorite ? "#fbc02d" : "#ccc"} />
-                        <span style=${{ marginLeft: '8px', verticalAlign: 'middle', color: isFavorite ? '#fbc02d' : '#666', fontWeight: isFavorite ? 'bold' : 'normal' }}>${isFavorite ? '已加入最愛' : '未加入最愛'}</span>
+                        <span style=${{ marginLeft: '8px', verticalAlign: 'middle', color: isFavorite ? '#fbc02d' : '#666', fontWeight: isFavorite ? 'bold' : 'normal' }}>${isFavorite ? '已關注' : '未關注'}</span>
                     </div>
                 </div>
                 <div className="filter-group">
@@ -344,7 +344,7 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                 <div className="filter-group">
                     <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                         <input type="checkbox" checked=${uiFilters.isFavorite} onChange=${e => setUiFilters({ ...uiFilters, isFavorite: e.target.checked })} style=${{ marginRight: 8 }} />
-                        我的最愛
+                        關注演員
                     </label>
                 </div>
                 <div className="filter-group">

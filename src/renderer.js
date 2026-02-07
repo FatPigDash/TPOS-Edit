@@ -1,13 +1,13 @@
 /*
 • TPOS (The Pile of Shame) 軟體開發 - Renderer Process
-• 版本: V1.4.0 (新增作品卡片顯示標籤-字體加大版)
+• 版本: V1.5.2 (修正作品詳情頁篩選後跳轉邏輯)
 */
 const React = require('react');
 const ReactDOM = require('react-dom/client');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const {
-    Database, Tag, Users, Plus
+    Database, Tag, Users, Plus, PanelLeft
 } = require('lucide-react');
 
 const { db } = require('./utils/db');
@@ -29,6 +29,9 @@ function App() {
     const [viewMode, setViewMode] = React.useState('list');
     const [selectedWorkId, setSelectedWorkId] = React.useState(null);
     const [works, setWorks] = React.useState([]);
+
+    // 列表頁面的側邊欄狀態 (預設開啟)
+    const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
     const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [] });
     const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [] });
@@ -86,7 +89,6 @@ function App() {
                 const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
                 const countSql = groupBy ? `SELECT COUNT(*) as count FROM (SELECT w.id FROM works w ${joinClause} ${whereSql} ${groupBy} ${having})` : `SELECT COUNT(*) as count FROM works w ${whereSql}`;
 
-                // 修正分頁器未即時更新的問題
                 const countResult = db.prepare(countSql).get(...params);
                 const currentTotal = countResult ? countResult.count : 0;
                 setTotalItems(currentTotal);
@@ -98,7 +100,6 @@ function App() {
 
                 const rows = db.prepare(`SELECT w.*, wi.file_name as cover_image FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY w.created_at DESC LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
                 
-                // 額外讀取每個作品的標籤 (v1.4.0 新增)
                 rows.forEach(row => {
                     try {
                         row.tags = db.prepare(`SELECT t.name, t.color FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
@@ -144,14 +145,12 @@ function App() {
         setAppliedFilters(empty);
     };
 
-    // 新增: 處理從演員列表快速跳轉至作品搜尋
     const handleActorQuickSearch = (actor) => {
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
         const newFilters = { 
             name: "", code: "", director: "", maker: "", publisher: "", rating: "", 
             actor: actorFilter, tags: [] 
         };
-        // 同步更新 UI 與 Applied，確保切換後立刻搜尋
         setUiFilters(newFilters);
         setAppliedFilters(newFilters);
         setActiveTab('works');
@@ -162,7 +161,7 @@ function App() {
         <${LoadingOverlay} show=${isLoading} />
         <div style=${{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
             <div className="navbar">
-                <div className="nav-title">The Pile of Shame (V2.1.0)</div>
+                <div className="nav-title">The Pile of Shame (V2.2.0)</div>
                 <div className="nav-tabs">
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
@@ -173,15 +172,28 @@ function App() {
             <div style=${{ flex: 1, overflow: 'hidden' }}>
                 ${activeTab === 'works' ? (
                     viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => setViewMode('list')} onSaveSuccess=${() => { setViewMode('list'); loadWorks(); }} />` :
-                        viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} onBack=${() => { setViewMode('list'); setSelectedWorkId(null); }} onEdit=${(id) => { setSelectedWorkId(id); setViewMode('edit'); }} />` :
+                        viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} 
+                            uiFilters=${uiFilters} 
+                            setUiFilters=${setUiFilters} 
+                            onApply=${() => { setAppliedFilters({ ...uiFilters }); setViewMode('list'); }} 
+                            onClear=${handleClearFilter}
+                            onBack=${() => { setViewMode('list'); setSelectedWorkId(null); }} 
+                            onEdit=${(id) => { setSelectedWorkId(id); setViewMode('edit'); }} />` :
                             html`<div className="main-layout">
-                        <${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />
+                        ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />`}
                         <div className="content-area">
-                            <div className="content-header" style=${{ flexDirection: 'column', alignItems: 'flex-start' }}>
-                                <div className="result-info">搜尋結果: 共${totalItems} 筆</div>
-                                <div style=${{ fontSize: '14px', color: '#666', marginTop: '8px', lineHeight: '1.5' }}>
-                                    ${getSearchConditions().length === 0 && '尚未搜尋'}
-                                    ${getSearchConditions().map(cond => html`<div key=${cond}>${cond}</div>`)}
+                            <div className="content-header" style=${{ alignItems: 'flex-start' }}>
+                                <div style=${{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                                    <button className="btn-ghost" onClick=${() => setIsSidebarOpen(!isSidebarOpen)} title=${isSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px' }}>
+                                        <${PanelLeft} size=${20} />
+                                    </button>
+                                    <div style=${{ flex: 1 }}>
+                                        <div className="result-info">搜尋結果: 共${totalItems} 筆</div>
+                                        <div style=${{ fontSize: '14px', color: '#666', marginTop: '4px', lineHeight: '1.5' }}>
+                                            ${getSearchConditions().length === 0 && '尚未搜尋'}
+                                            ${getSearchConditions().map(cond => html`<span key=${cond} style=${{ marginRight: '8px' }}>${cond}</span>`)}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div className="card-grid">

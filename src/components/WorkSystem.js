@@ -7,7 +7,7 @@ const { webUtils, ipcRenderer } = require('electron');
 const {
     Search, ChevronDown, ChevronRight: ChevronRightIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
-    Save, Plus, Trash2, Download
+    Save, Plus, Trash2, Download, PanelLeft
 } = require('lucide-react');
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
@@ -331,7 +331,7 @@ function TagSelector({ selectedTags, onChange }) {
 
 // 8. 作品系統元件 (Work System)
 
-function WorkDetails({ workId, onBack, onEdit }) {
+function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply, onClear }) {
     const [work, setWork] = React.useState(null);
     const [images, setImages] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
@@ -339,6 +339,8 @@ function WorkDetails({ workId, onBack, onEdit }) {
     const [linkedActors, setLinkedActors] = React.useState([]);
     const [linkedTags, setLinkedTags] = React.useState([]);
     const [viewingActorImage, setViewingActorImage] = React.useState(null);
+    // 新增: 篩選器側邊欄顯示狀態 (預設收闔)
+    const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
 
     React.useEffect(() => {
         if (!db) return;
@@ -367,6 +369,45 @@ function WorkDetails({ workId, onBack, onEdit }) {
         } catch (err) { console.error(err); }
     }, [workId]);
 
+    // 中鍵處理邏輯: 演員
+    const handleMiddleClickActor = (e, actor) => {
+        if (e.button === 1) { // 1 = 滑鼠中鍵
+            e.preventDefault();
+            if (!actor.actor_id) return; // 僅處理已建立卡片的演員
+            
+            const currentActors = uiFilters.actor?.items || [];
+            // 避免重複加入
+            if (!currentActors.find(a => a.id === actor.actor_id)) {
+                setUiFilters({
+                    ...uiFilters,
+                    actor: {
+                        ...uiFilters.actor,
+                        items: [...currentActors, { id: actor.actor_id, name: actor.name }]
+                    }
+                });
+            }
+            // 自動開啟篩選器側邊欄以便檢視
+            setIsFilterSidebarOpen(true);
+        }
+    };
+
+    // 中鍵處理邏輯: 標籤
+    const handleMiddleClickTag = (e, tagId) => {
+        if (e.button === 1) { // 1 = 滑鼠中鍵
+            e.preventDefault();
+            const currentTags = uiFilters.tags || [];
+            // 避免重複加入
+            if (!currentTags.includes(tagId)) {
+                setUiFilters({
+                    ...uiFilters,
+                    tags: [...currentTags, tagId]
+                });
+            }
+            // 自動開啟篩選器側邊欄以便檢視
+            setIsFilterSidebarOpen(true);
+        }
+    };
+
     if (!work) return html`<div className="main-layout">載入中...</div>`;
 
     const groups = [];
@@ -378,8 +419,15 @@ function WorkDetails({ workId, onBack, onEdit }) {
 
     return html`
         <div className="main-layout">
+            ${isFilterSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${onApply} onClear=${onClear} />`}
+            
             <div className="sidebar" style=${{ width: '65%' }}>
-                <h3 style=${{ margin: '0 0 10px 0' }}>作品預覽</h3>
+                <div style=${{ display: 'flex', alignItems: 'center', marginBottom: '10px' }}>
+                    <button className="btn-ghost" onClick=${() => setIsFilterSidebarOpen(!isFilterSidebarOpen)} title=${isFilterSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px', padding: '4px' }}>
+                        <${PanelLeft} size=${20} />
+                    </button>
+                    <h3 style=${{ margin: 0 }}>作品預覽</h3>
+                </div>
                 <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px' }}>
                     ${images[previewIndex] ? html`<img src="${images[previewIndex].url}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', cursor: 'zoom-in' }} onClick=${() => setViewingImage(images[previewIndex].url)} />` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
                 </div>
@@ -387,10 +435,13 @@ function WorkDetails({ workId, onBack, onEdit }) {
                     ${images.map((img, idx) => html`<div className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" style=${{ width: 160, height: 100, flexShrink: 0 }} onClick=${() => setPreviewIndex(idx)}><img src="${img.url}" /></div>`)}
                 </div>
             </div>
+
             <div className="content-area">
                 <div className="content-header">
-                    <div className="nav-btn" onClick=${onBack} style=${{ cursor: 'pointer', marginRight: '16px' }}><${ArrowLeft} size=${24} /></div>
-                    <div className="result-info" style=${{ flex: 1 }}>作品詳情</div>
+                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div className="nav-btn" onClick=${onBack} style=${{ cursor: 'pointer' }}><${ArrowLeft} size=${24} /></div>
+                    </div>
+                    <div className="result-info" style=${{ flex: 1, marginLeft: '16px' }}>作品詳情</div>
                     <button className="btn-primary" onClick=${() => onEdit(workId)}><${Edit} size=${16} style=${{ marginRight: 6 }} /> 編輯作品</button>
                 </div>
 
@@ -410,7 +461,13 @@ function WorkDetails({ workId, onBack, onEdit }) {
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
                                 const isRealActor = !!actor.actor_id;
-                                return html`<span style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} title=${isRealActor ? actor.actor_number : '純文字標籤'}>${actor.name}</span>`;
+                                return html`<span 
+                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
+                                    onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
+                                    onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
+                                    title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
+                                    ${actor.name}
+                                </span>`;
                             })}
                             ${linkedActors.length === 0 && html`<span style=${{ color: '#999' }}>無關聯演員</span>`}
                         </div>
@@ -425,7 +482,13 @@ function WorkDetails({ workId, onBack, onEdit }) {
                                 <div style=${{ marginBottom: 8, display: 'flex', alignItems: 'center' }}>
                                     <span style=${{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', marginRight: 8, fontSize: '12px', fontWeight: 'bold', backgroundColor: group.color || '#eee', color: group.color ? '#fff' : '#333' }}>${group.name}</span>
                                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                        ${group.tags.map(tag => html`<span className="tag-chip" style=${tag.color ? { backgroundColor: tag.color, color: '#fff', borderColor: tag.color } : {}}>${tag.name}</span>`)}
+                                        ${group.tags.map(tag => html`<span 
+                                            className="tag-chip" 
+                                            style=${tag.color ? { backgroundColor: tag.color, color: '#fff', borderColor: tag.color } : {}}
+                                            onMouseDown=${(e) => handleMiddleClickTag(e, tag.id)}
+                                            title="中鍵點擊加入篩選">
+                                            ${tag.name}
+                                        </span>`)}
                                     </div>
                                 </div>
                             `)}
