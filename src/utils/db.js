@@ -50,7 +50,16 @@ function initDB() {
             if (!hasFavorite) {
                 db.prepare("ALTER TABLE actors ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
             }
-        } catch (e) { console.error("Migration Error:", e); }
+        } catch (e) { console.error("Migration Error (Actors):", e); }
+
+        // V2.2.x 更新: 檢查並新增 works 表的 is_favorite 欄位 (待看關注)
+        try {
+            const tableInfo = db.prepare("PRAGMA table_info(works)").all();
+            const hasWorkFavorite = tableInfo.some(col => col.name === 'is_favorite');
+            if (!hasWorkFavorite) {
+                db.prepare("ALTER TABLE works ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
+            }
+        } catch (e) { console.error("Migration Error (Works):", e); }
 
         // 建立資料表
         db.exec(`
@@ -81,7 +90,8 @@ function initDB() {
                 director TEXT,
                 maker TEXT,
                 publisher TEXT,
-                rating REAL
+                rating REAL,
+                is_favorite INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS work_images (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +127,9 @@ function initDB() {
         `);
     } catch (err) { console.error('DB Init Failed:', err); }
 }
+
+// 執行初始化，確保 Migration 邏輯被執行
+initDB();
 
 module.exports = {
     db,

@@ -7,7 +7,7 @@ const { webUtils, ipcRenderer } = require('electron');
 const {
     Search, ChevronDown, ChevronRight: ChevronRightIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
-    Save, Plus, Trash2, Download, PanelLeft
+    Save, Plus, Trash2, Download, PanelLeft, Heart, Bookmark
 } = require('lucide-react');
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
@@ -198,6 +198,20 @@ function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
                 <label className="filter-label">發行商</label>
                 <input className="filter-input" value=${uiFilters.publisher} onInput=${e => setUiFilters({ ...uiFilters, publisher: e.target.value })} placeholder="搜尋發行商..." />
                 <${SearchHelpText} />
+            </div>
+
+            <div className="filter-group">
+                <label className="filter-label">其他條件</label>
+                <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked=${uiFilters.hasFavActor} onChange=${e => setUiFilters({ ...uiFilters, hasFavActor: e.target.checked })} style=${{ marginRight: '8px' }} />
+                        <${Heart} size=${16} fill="#e91e63" color="#e91e63" style=${{ marginRight: '4px' }} /> 包含關注演員
+                    </label>
+                    <label style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked=${uiFilters.isWatchLater} onChange=${e => setUiFilters({ ...uiFilters, isWatchLater: e.target.checked })} style=${{ marginRight: '8px' }} />
+                        <${Bookmark} size=${16} fill="#2196F3" color="#2196F3" style=${{ marginRight: '4px' }} /> 待看關注
+                    </label>
+                </div>
             </div>
 
             <${TagFilterSidebar} selectedTagIds=${uiFilters.tags} onChange=${newTags => setUiFilters({ ...uiFilters, tags: newTags })} />
@@ -461,8 +475,9 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
                                 const isRealActor = !!actor.actor_id;
+                                const hasImage = !!actor.image_path;
                                 return html`<span 
-                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
+                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: hasImage ? '#e3f2fd' : '#fff9c4', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
                                     onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
@@ -504,7 +519,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
 
 function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const isEditMode = !!initialWorkId;
-    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '' });
+    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 });
     const [images, setImages] = React.useState([]);
     const [deletedImageIds, setDeletedImageIds] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
@@ -524,7 +539,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (isEditMode) {
             try {
                 const work = db.prepare('SELECT * FROM works WHERE id=?').get(initialWorkId);
-                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '' });
+                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 });
 
                 const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(initialWorkId).map(row => ({
                     id: Date.now() + Math.random(),
@@ -542,10 +557,10 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 const linkedT = db.prepare('SELECT t.id, t.name, t.color, t.group_id FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id WHERE wtl.work_id = ?').all(initialWorkId);
                 setSelectedTags(linkedT);
 
-                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '' }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
+                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
             } catch (err) { }
         } else {
-            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '' }, images: '[]', actors: '[]', tags: '[]' });
+            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 }, images: '[]', actors: '[]', tags: '[]' });
         }
     }, [initialWorkId]);
 
@@ -675,18 +690,19 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (!formData.work_number || !formData.name) return alert('編號與名稱必填');
 
         const ratingVal = formData.rating.trim() === '' ? null : parseFloat(formData.rating);
+        const favoriteVal = formData.is_favorite ? 1 : 0;
 
         setIsLoading(true);
         setTimeout(() => {
             try {
                 db.transaction(() => {
                     let workId = initialWorkId;
-                    const saveData = { ...formData, rating: ratingVal };
+                    const saveData = { ...formData, rating: ratingVal, is_favorite: favoriteVal };
 
                     if (isEditMode) {
-                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating WHERE id=@id`).run({ ...saveData, id: workId });
+                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_favorite=@is_favorite WHERE id=@id`).run({ ...saveData, id: workId });
                     } else {
-                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
+                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, created_at, is_favorite) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @created_at, @is_favorite)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
                     }
 
                     if (deletedImageIds.length > 0) {
@@ -796,12 +812,16 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 <div className="editor-form">
                     <div className="filter-group">
                         <label className="filter-label">識別碼</label>
-                        <div style=${{ display: 'flex', gap: '8px' }}>
+                        <div style=${{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
                             <input className="filter-input" style=${{ flex: 1 }} value=${formData.work_number || ''} onInput=${e => handleChange('work_number', e.target.value)} onMouseDown=${stopProp} />
                             <button className="btn-primary" onClick=${() => setIsScraperOpen(true)} style=${{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#17a2b8' }}>
                                 <${Download} size=${16} /> 自動抓取
                             </button>
                         </div>
+                        <label style=${{ display: 'flex', alignItems: 'center', marginTop: '12px', cursor: 'pointer', userSelect: 'none' }}>
+                            <input type="checkbox" checked=${formData.is_favorite === 1} onChange=${e => handleChange('is_favorite', e.target.checked ? 1 : 0)} style=${{ marginRight: '8px', width: '18px', height: '18px' }} />
+                            <span style=${{ fontWeight: 'bold', color: '#2196F3', fontSize: '15px' }}>加入待看關注</span>
+                        </label>
                     </div>
                     <div className="filter-group"><label className="filter-label">作品名稱</label><input className="filter-input" value=${formData.name || ''} onInput=${e => handleChange('name', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">發行日期</label><input type="date" className="filter-input" value=${formData.release_date || ''} onInput=${e => handleChange('release_date', e.target.value)} onMouseDown=${stopProp} /></div>
@@ -838,6 +858,10 @@ function WorkCard({ work, onClick }) {
 
     React.useEffect(() => { setImageError(false); }, [work.id, work.cover_image]);
 
+    // 判斷是否顯示關注圖示
+    const showFavActor = work.fav_actor_count > 0;
+    const showWatchLater = work.is_favorite === 1;
+
     return html`
         <div className="work-card" onClick=${() => onClick(work.id)}>
             <div className="card-cover">
@@ -851,7 +875,13 @@ function WorkCard({ work, onClick }) {
             </div>
             <div className="card-info">
                 <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '4px', marginBottom: '4px', height: '56px', overflow: 'hidden' }}>
-                    <div className="card-id" style=${{ flexShrink: 0, marginTop: '4px' }}>${work.work_number || '[NO ID]'}</div>
+                    <div style=${{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                        <div className="card-id" style=${{ marginTop: '4px' }}>${work.work_number || '[NO ID]'}</div>
+                        <div style=${{ display: 'flex', gap: '4px', marginTop: '2px', height: '16px' }}>
+                            ${showFavActor && html`<${Heart} size=${14} fill="#e91e63" color="#e91e63" title="包含關注演員" />`}
+                            ${showWatchLater && html`<${Bookmark} size=${14} fill="#2196F3" color="#2196F3" title="待看關注" />`}
+                        </div>
+                    </div>
                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', alignContent: 'flex-start' }}>
                         ${work.tags && work.tags.map(t => html`
                             <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? '#fff' : '#333', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', height: '26px' }}>

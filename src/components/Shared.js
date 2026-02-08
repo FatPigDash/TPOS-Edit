@@ -82,7 +82,7 @@ function LoadingOverlay({ show, message = "正在處理中..." }) {
 }
 
 function SearchHelpText() {
-    return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.2 }}>說明: + = AND, | = OR, - = NOT (空格視為文字)</div>`;
+    return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.2 }}>說明: + = AND, | = OR, - = NOT (空格視為文字)<br />當「-」前面有空格時才會觸發NOT條件</div>`;
 }
 
 function Pagination({ currentPage, totalPages, onPageChange }) {

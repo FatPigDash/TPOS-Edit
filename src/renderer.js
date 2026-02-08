@@ -1,13 +1,13 @@
 /*
 • TPOS (The Pile of Shame) 軟體開發 - Renderer Process
-• 版本: V1.5.2 (修正作品詳情頁篩選後跳轉邏輯)
+• 版本: V1.5.6 (新增作品名稱排序)
 */
 const React = require('react');
 const ReactDOM = require('react-dom/client');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const {
-    Database, Tag, Users, Plus, PanelLeft
+    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText
 } = require('lucide-react');
 
 const { db } = require('./utils/db');
@@ -33,8 +33,12 @@ function App() {
     // 列表頁面的側邊欄狀態 (預設開啟)
     const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
-    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [] });
-    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [] });
+    // 排序狀態: created_desc (預設), code_asc, rating_desc, name_asc
+    const [sortOrder, setSortOrder] = React.useState('created_desc');
+
+    // V2.2.x: 新增 hasFavActor 與 isWatchLater 狀態
+    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
+    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
     const [currentPage, setCurrentPage] = React.useState(1);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
@@ -58,6 +62,16 @@ function App() {
                 if (appliedFilters.maker) { const q = parseSearchQuery(appliedFilters.maker, 'w.maker'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
                 if (appliedFilters.publisher) { const q = parseSearchQuery(appliedFilters.publisher, 'w.publisher'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
                 if (appliedFilters.rating && appliedFilters.rating.trim() !== '') { const rVal = parseFloat(appliedFilters.rating); if (!isNaN(rVal)) { whereClauses.push('w.rating >= ?'); params.push(rVal); } }
+
+                // 新增: 待看關注篩選
+                if (appliedFilters.isWatchLater) {
+                    whereClauses.push('w.is_favorite = 1');
+                }
+
+                // 新增: 關注演員篩選 (使用 EXISTS 子查詢)
+                if (appliedFilters.hasFavActor) {
+                    whereClauses.push('EXISTS (SELECT 1 FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1)');
+                }
 
                 const af = appliedFilters.actor;
                 if (af?.items?.length > 0) {
@@ -98,7 +112,20 @@ function App() {
                 let targetPage = Math.min(currentPage, totalP);
                 const offset = (targetPage - 1) * ITEMS_PER_PAGE;
 
-                const rows = db.prepare(`SELECT w.*, wi.file_name as cover_image FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY w.created_at DESC LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
+                // 決定排序方式
+                let orderByClause = 'w.created_at DESC'; // 預設: 新增時間(新到舊)
+                if (sortOrder === 'code_asc') {
+                    orderByClause = 'w.work_number ASC';
+                } else if (sortOrder === 'rating_desc') {
+                    orderByClause = 'w.rating DESC, w.created_at DESC';
+                } else if (sortOrder === 'name_asc') {
+                    orderByClause = 'w.name ASC';
+                }
+
+                // 修改查詢: 增加 fav_actor_count 欄位，用於判斷是否顯示「關注演員」圖示
+                const selectFields = `w.*, wi.file_name as cover_image, (SELECT COUNT(*) FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1) as fav_actor_count`;
+                // 使用動態 orderByClause
+                const rows = db.prepare(`SELECT ${selectFields} FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
                 
                 rows.forEach(row => {
                     try {
@@ -112,8 +139,65 @@ function App() {
         }, 50);
     };
 
+    // 處理識別碼移至尾端的邏輯
+    const handleBatchMoveId = () => {
+        if (!db) return;
+        if (!confirm("⚠️ 批量名稱格式化警告\n\n此功能會掃描所有作品，若「作品名稱」開頭包含「識別碼」，會將識別碼移至名稱的最後方。\n\n例如:\n「ABC-123 作品範例」 → 「作品範例 ABC-123」\n\n確定要執行嗎？")) return;
+
+        setIsLoading(true);
+        setTimeout(() => {
+            try {
+                let updatedCount = 0;
+                db.transaction(() => {
+                    // 撈出所有作品進行檢查
+                    const allWorks = db.prepare("SELECT id, name, work_number FROM works").all();
+                    const updateStmt = db.prepare("UPDATE works SET name = ? WHERE id = ?");
+
+                    allWorks.forEach(w => {
+                        if (!w.work_number || !w.name) return;
+
+                        // 檢查名稱是否以識別碼開頭 (忽略大小寫與空白)
+                        // 使用 trim() 去除前後空白，toLowerCase() 忽略大小寫
+                        const cleanName = w.name.trim();
+                        const cleanNumber = w.work_number.trim();
+
+                        if (cleanName.toLowerCase().startsWith(cleanNumber.toLowerCase())) {
+                            // 移除開頭的識別碼 (長度為識別碼長度)
+                            // 並 trim() 去除移除後可能殘留的開頭空白
+                            let newNameBody = cleanName.slice(cleanNumber.length).trim();
+
+                            // 組合成新名稱: [內容] [識別碼]
+                            // 若移除後內容是空的 (代表原名只有識別碼)，則保留原狀或僅顯示識別碼
+                            let finalName;
+                            if (!newNameBody) {
+                                finalName = cleanNumber; // 原本就只有號碼，不變動或僅正規化
+                            } else {
+                                finalName = `${newNameBody} ${cleanNumber}`;
+                            }
+
+                            // 只有在名稱真的有改變時才更新 (避免重複執行導致空白變多等問題)
+                            if (finalName !== w.name) {
+                                updateStmt.run(finalName, w.id);
+                                updatedCount++;
+                            }
+                        }
+                    });
+                })();
+                
+                alert(`處理完成！\n已更新 ${updatedCount} 筆作品的名稱格式。`);
+                loadWorks(); // 重新載入列表以顯示變更
+
+            } catch (err) {
+                console.error(err);
+                alert("處理失敗: " + err.message);
+            }
+            setIsLoading(false);
+        }, 100);
+    };
+
     React.useEffect(() => { setCurrentPage(1); }, [appliedFilters]);
-    React.useEffect(() => { loadWorks(); }, [activeTab, viewMode, currentPage, appliedFilters]);
+    // 監聽 sortOrder 的變化來重新載入
+    React.useEffect(() => { loadWorks(); }, [activeTab, viewMode, currentPage, appliedFilters, sortOrder]);
 
     const getSearchConditions = () => {
         const conds = [];
@@ -123,6 +207,8 @@ function App() {
         if (appliedFilters.director) conds.push(`導演: ${appliedFilters.director}`);
         if (appliedFilters.maker) conds.push(`製作商: ${appliedFilters.maker}`);
         if (appliedFilters.publisher) conds.push(`發行商: ${appliedFilters.publisher}`);
+        if (appliedFilters.hasFavActor) conds.push(`包含關注演員`);
+        if (appliedFilters.isWatchLater) conds.push(`待看關注`);
         const af = appliedFilters.actor;
         if (af?.items?.length > 0) {
             const names = af.items.map(i => i.name).join(af.mode === 'AND' ? ' + ' : ' | ');
@@ -140,7 +226,7 @@ function App() {
     };
 
     const handleClearFilter = () => {
-        const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [] };
+        const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
     };
@@ -149,7 +235,7 @@ function App() {
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
         const newFilters = { 
             name: "", code: "", director: "", maker: "", publisher: "", rating: "", 
-            actor: actorFilter, tags: [] 
+            actor: actorFilter, tags: [], hasFavActor: false, isWatchLater: false 
         };
         setUiFilters(newFilters);
         setAppliedFilters(newFilters);
@@ -182,8 +268,8 @@ function App() {
                             html`<div className="main-layout">
                         ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />`}
                         <div className="content-area">
-                            <div className="content-header" style=${{ alignItems: 'flex-start' }}>
-                                <div style=${{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                            <div className="content-header" style=${{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                                <div style=${{ display: 'flex', alignItems: 'center', flex: 1, minWidth: '300px' }}>
                                     <button className="btn-ghost" onClick=${() => setIsSidebarOpen(!isSidebarOpen)} title=${isSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px' }}>
                                         <${PanelLeft} size=${20} />
                                     </button>
@@ -194,6 +280,18 @@ function App() {
                                             ${getSearchConditions().map(cond => html`<span key=${cond} style=${{ marginRight: '8px' }}>${cond}</span>`)}
                                         </div>
                                     </div>
+                                </div>
+                                <div style=${{ display: 'flex', alignItems: 'center' }}>
+                                    <${ArrowUpDown} size=${16} color="#666" style=${{ marginRight: '8px' }} />
+                                    <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)}>
+                                        <option value="created_desc">新增時間 (新 → 舊)</option>
+                                        <option value="code_asc">識別碼 (A → Z)</option>
+                                        <option value="name_asc">作品名稱 (A → Z)</option>
+                                        <option value="rating_desc">評分 (高 → 低)</option>
+                                    </select>
+                                    <button className="btn-ghost" onClick=${handleBatchMoveId} title="將識別碼從名稱開頭移至尾端" style=${{ border: '1px solid #ccc', borderRadius: '4px' }}>
+                                        <${FileText} size=${16} />
+                                    </button>
                                 </div>
                             </div>
                             <div className="card-grid">

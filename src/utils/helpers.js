@@ -34,30 +34,35 @@ function getOrCreateActorId(db, name) {
 }
 
 // 搜尋語法解析器 (+為AND, | 為OR, -為NOT)
+// 優化: 改用空白分詞，避免將單字中間的連字號(如 ABC-123)誤判為排除運算子
 function parseSearchQuery(input, dbField) {
     if (!input || !input.trim()) return { sql: "", params: [] };
-    const orGroups = input.split(' | ');
+    const orGroups = input.split(' | '); // OR logic
     const sqlParts = [];
     const params = [];
 
     orGroups.forEach(group => {
-        const tokens = group.split(/([+\-])/); // 保留分隔符
+        // 使用空白切割單詞，保留單字內部的符號
+        const rawTokens = group.trim().split(/\s+/); 
         const groupConditions = [];
-        let currentOp = '+';
-
-        tokens.forEach(token => {
+        
+        rawTokens.forEach(token => {
             const trimmed = token.trim();
             if (!trimmed) return;
-            if (trimmed === '+' || trimmed === '-') {
-                currentOp = trimmed;
+            
+            // 檢查開頭是否有運算子 (且長度大於1，避免只有一個 + 或 - 的情況)
+            if (trimmed.startsWith('-') && trimmed.length > 1) {
+                // NOT logic (e.g. "-keyword")
+                groupConditions.push(`${dbField} NOT LIKE ?`);
+                params.push(`%${trimmed.slice(1)}%`);
+            } else if (trimmed.startsWith('+') && trimmed.length > 1) {
+                // AND logic explicit (e.g. "+keyword")
+                groupConditions.push(`${dbField} LIKE ?`);
+                params.push(`%${trimmed.slice(1)}%`);
             } else {
-                if (currentOp === '-') {
-                    groupConditions.push(`${dbField} NOT LIKE ?`);
-                    params.push(`%${trimmed}%`);
-                } else {
-                    groupConditions.push(`${dbField} LIKE ?`);
-                    params.push(`%${trimmed}%`);
-                }
+                // Default AND logic (e.g. "keyword" or "HUNTA-645")
+                groupConditions.push(`${dbField} LIKE ?`);
+                params.push(`%${trimmed}%`);
             }
         });
 
