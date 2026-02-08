@@ -50,16 +50,16 @@ function initDB() {
             if (!hasFavorite) {
                 db.prepare("ALTER TABLE actors ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
             }
-        } catch (e) { console.error("Migration Error (Actors):", e); }
+        } catch (e) { console.error("Migration Error (is_favorite):", e); }
 
-        // V2.2.x 更新: 檢查並新增 works 表的 is_favorite 欄位 (待看關注)
+        // V1.3.0 更新: 檢查並新增 actors 表的 aliases 欄位
         try {
-            const tableInfo = db.prepare("PRAGMA table_info(works)").all();
-            const hasWorkFavorite = tableInfo.some(col => col.name === 'is_favorite');
-            if (!hasWorkFavorite) {
-                db.prepare("ALTER TABLE works ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
+            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
+            const hasAliases = tableInfo.some(col => col.name === 'aliases');
+            if (!hasAliases) {
+                db.prepare("ALTER TABLE actors ADD COLUMN aliases TEXT").run();
             }
-        } catch (e) { console.error("Migration Error (Works):", e); }
+        } catch (e) { console.error("Migration Error (aliases):", e); }
 
         // 建立資料表
         db.exec(`
@@ -90,8 +90,7 @@ function initDB() {
                 director TEXT,
                 maker TEXT,
                 publisher TEXT,
-                rating REAL,
-                is_favorite INTEGER DEFAULT 0
+                rating REAL
             );
             CREATE TABLE IF NOT EXISTS work_images (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +103,7 @@ function initDB() {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 actor_number TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
+                aliases TEXT,
                 image_path TEXT,
                 created_at INTEGER,
                 is_deleted INTEGER DEFAULT 0,
@@ -127,9 +127,6 @@ function initDB() {
         `);
     } catch (err) { console.error('DB Init Failed:', err); }
 }
-
-// 執行初始化，確保 Migration 邏輯被執行
-initDB();
 
 module.exports = {
     db,
