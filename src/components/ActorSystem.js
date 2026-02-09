@@ -6,12 +6,13 @@ const fs = require('fs');
 const { webUtils } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
-    Upload, Plus, Search, X, GitMerge, ArrowRight
+    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2
 } = require('lucide-react');
 
 const { db, actorsImgDir } = require('../utils/db');
+// 引入 findSmartMatchActor 與 parseNameWithAliases
 const {
-    getFileUrl, getNewActorNumber, parseSearchQuery, stopPropagation
+    getFileUrl, getNewActorNumber, parseSearchQuery, stopPropagation, findSmartMatchActor, parseNameWithAliases
 } = require('../utils/helpers');
 const {
     ConfirmModal, Modal, ImageViewerModal, Pagination, SearchHelpText
@@ -144,22 +145,44 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     const handleSave = () => {
         if (!db) return;
-        if (!name.trim()) return alert('請輸入姓名');
-        const existing = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0 AND id != ?').get(name.trim(), isEdit ? actorId : -1);
-        if (existing) return alert('已存在相同名稱的演員');
+        const rawName = name.trim();
+        if (!rawName) return alert('請輸入姓名');
+
+        // Feature: 自動解析名稱中的括號內容
+        // 修改: 僅提取別名，保留名字中的括號顯示
+        const parsed = parseNameWithAliases(rawName);
+        const finalName = rawName; // 使用原始名稱 (包含括號)
+        const extractedAliases = parsed.aliases;
+
+        // 合併現有的別名輸入與提取出的別名
+        const currentAliases = aliases.split(/[,\uff0c]/).map(s => s.trim()).filter(s => s);
+        // 使用 Set 去重
+        const mergedAliases = [...new Set([...currentAliases, ...extractedAliases])].join(',');
+
+        // 檢查重複 (使用智慧比對)
+        const duplicateId = findSmartMatchActor(db, finalName);
+        
+        if (duplicateId) {
+            if (!isEdit || (isEdit && duplicateId !== actorId)) {
+                const dupActor = db.prepare('SELECT name, actor_number FROM actors WHERE id = ?').get(duplicateId);
+                if (dupActor) {
+                    alert(`已存在重複的演員！\n系統偵測到此名稱與現有資料庫衝突。\n\n【現有演員資訊】\n姓名: ${dupActor.name}\n編號: ${dupActor.actor_number}`);
+                    setIsLoading(false);
+                    return;
+                }
+            }
+        }
 
         setIsLoading(true);
         setTimeout(() => {
             try {
                 db.transaction(() => {
                     let currentId = actorId;
-                    // 清理別名格式：去除多餘空格，過濾空字串
-                    const cleanAliases = aliases.split(/[,\uff0c]/).map(s => s.trim()).filter(s => s).join(',');
-
+                    
                     if (isEdit) {
-                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ? WHERE id = ?').run(name.trim(), cleanAliases, isFavorite, actorId);
+                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, actorId);
                     } else {
-                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite) VALUES (?, ?, ?, ?, ?)').run(actorNumber, name.trim(), cleanAliases, Date.now(), isFavorite);
+                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite) VALUES (?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite);
                         currentId = info.lastInsertRowid;
                     }
 
@@ -175,8 +198,8 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                         db.prepare('UPDATE actors SET image_path = NULL WHERE id = ?').run(currentId);
                     }
                     
-                    // 自動關聯文字連結 (Auto-link text-only records)
-                    db.prepare('UPDATE work_actor_link SET actor_id = ?, actor_name = NULL WHERE actor_id IS NULL AND actor_name = ?').run(currentId, name.trim());
+                    // 自動關聯文字連結 (使用新名稱)
+                    db.prepare('UPDATE work_actor_link SET actor_id = ?, actor_name = NULL WHERE actor_id IS NULL AND actor_name = ?').run(currentId, finalName);
                 })();
                 setTimeout(() => {
                     setIsLoading(false);
@@ -198,6 +221,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 <div className="filter-group">
                     <label className="filter-label">演員姓名</label>
                     <input className="filter-input" value=${name} onInput=${e => setName(e.target.value)} placeholder="輸入姓名..." />
+                    <small style=${{color: '#888', display: 'block', marginTop: '4px'}}>* 提示: 若輸入 "姓名 (別名)"，儲存時別名會自動加入別名欄位，且顯示名稱保留括號。</small>
                 </div>
                 <div className="filter-group">
                     <label className="filter-label">別名 / 舊藝名 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(以逗號區隔)</span></label>
@@ -285,10 +309,6 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
                 }
 
                 // 3. 處理圖片 (若目標無圖片且選項開啟，轉移來源圖片)
-                // 注意：這會改變資料庫路徑，實際檔案不移動(因為檔名含編號)，或者可以選擇刪除舊檔
-                // 簡單作法：若目標沒圖，直接指向來源的圖檔路徑。
-                // 但為了保持檔名規範(actors_編號)，我們複製一份並改名比較保險，或是直接沿用。
-                // 考慮到用戶是初學者，我們簡單地更新 path 即可，雖然檔名編號會不對應，但系統能讀取。
                 if (!targetActor.image_path && sourceActor.image_path && useSourceImage) {
                     db.prepare('UPDATE actors SET image_path = ? WHERE id = ?').run(sourceActor.image_path, targetActor.id);
                     // 為了避免 source 被刪除時觸發圖片刪除邏輯(如果有 cleanup)，這裡先將 source 置空
@@ -296,8 +316,6 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
                 }
 
                 // 4. 刪除來源演員 (標記為刪除)
-                // 圖片部分：如果圖片沒被轉移，理論上應該刪除。但為了安全起見，我們先保留檔案，只在 DB 標記刪除。
-                // 如果需要物理刪除圖片，可以在這裡做 fs.unlink。
                 if (sourceActor.image_path) {
                     const imgPath = path.join(actorsImgDir, sourceActor.image_path);
                     if (fs.existsSync(imgPath) && (!targetActor.image_path || targetActor.image_path !== sourceActor.image_path)) {
@@ -382,7 +400,9 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
 function ActorSystem({ setIsLoading, onNavigateToWork }) {
     const ITEMS_PER_PAGE = 24;
     const [actors, setActors] = React.useState([]);
-    // 新增 isFavorite 篩選條件
+    // viewMode: 'normal' | 'duplicates'
+    const [viewMode, setViewMode] = React.useState('normal');
+    
     const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
     const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
     const [sortOrder, setSortOrder] = React.useState('number_desc');
@@ -399,76 +419,169 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
         setIsLoading(true);
         setTimeout(() => {
             try {
-                // 使用陣列收集條件, 最後用 join(' AND ') 組合確保 SQL 語法絕對正確
-                const conditions = ['is_deleted = 0'];
-                const params = [];
-                if (appliedFilters.name) {
-                    // 修改: 同時搜尋 name 和 aliases
-                    // 支援多關鍵字，例如 "Yui Hatano" -> (name like %Yui% OR aliases like %Yui%) AND ...
-                    const terms = appliedFilters.name.trim().split(/\s+/);
-                    const subConditions = [];
-                    terms.forEach(term => {
-                        subConditions.push(`(name LIKE ? OR aliases LIKE ?)`);
-                        params.push(`%${term}%`, `%${term}%`);
-                    });
-                    if (subConditions.length > 0) {
-                        conditions.push(`(${subConditions.join(' AND ')})`);
+                if (viewMode === 'duplicates') {
+                    // 相似名稱搜尋模式
+                    // 找出名字有包含關係的演員 (例如 "波多野" 和 "波多野結衣")
+                    // 排除名字太短的 (小於2個字), 避免誤判
+                    const baseCondition = `
+                        is_deleted = 0 
+                        AND length(name) >= 2
+                        AND EXISTS (
+                            SELECT 1 FROM actors b 
+                            WHERE b.id != actors.id 
+                            AND b.is_deleted = 0
+                            AND length(b.name) >= 2
+                            AND (actors.name LIKE '%' || b.name || '%' OR b.name LIKE '%' || actors.name || '%')
+                        )
+                    `;
+                    
+                    const countResult = db.prepare(`SELECT COUNT(*) as count FROM actors WHERE ${baseCondition}`).get();
+                    const total = countResult ? countResult.count : 0;
+                    setTotalItems(total);
+                    
+                    const totalP = Math.ceil(total / ITEMS_PER_PAGE) || 1;
+                    setTotalPages(totalP);
+                    let targetPage = Math.min(currentPage, totalP);
+                    if (targetPage < 1) targetPage = 1;
+                    const offset = (targetPage - 1) * ITEMS_PER_PAGE;
+                    
+                    // 強制依名字排序，讓相似的在一起
+                    const rows = db.prepare(`
+                        SELECT a.*, (SELECT COUNT(*) FROM work_actor_link wal WHERE wal.actor_id = a.id) as work_count 
+                        FROM actors a 
+                        WHERE ${baseCondition.replace(/actors\./g, 'a.')}
+                        ORDER BY a.name ASC 
+                        LIMIT ? OFFSET ?
+                    `).all(ITEMS_PER_PAGE, offset);
+                    
+                    const timestamp = Date.now();
+                    setActors(rows.map(r => ({ ...r, cacheBust: timestamp })));
+                    // 這裡不使用 setCurrentPage(targetPage) 避免循環，只在需要時更新
+                } else {
+                    // 正常模式
+                    const conditions = ['is_deleted = 0'];
+                    const params = [];
+                    if (appliedFilters.name) {
+                        const terms = appliedFilters.name.trim().split(/\s+/);
+                        const subConditions = [];
+                        terms.forEach(term => {
+                            subConditions.push(`(name LIKE ? OR aliases LIKE ?)`);
+                            params.push(`%${term}%`, `%${term}%`);
+                        });
+                        if (subConditions.length > 0) {
+                            conditions.push(`(${subConditions.join(' AND ')})`);
+                        }
                     }
-                }
-                if (appliedFilters.code) {
-                    const query = parseSearchQuery(appliedFilters.code, 'actor_number');
-                    if (query.sql) {
-                        conditions.push(query.sql.replace(/^\s*AND\s+/, ''));
-                        params.push(...query.params);
+                    if (appliedFilters.code) {
+                        const query = parseSearchQuery(appliedFilters.code, 'actor_number');
+                        if (query.sql) {
+                            conditions.push(query.sql.replace(/^\s*AND\s+/, ''));
+                            params.push(...query.params);
+                        }
                     }
+                    if (appliedFilters.noImage) conditions.push("(image_path IS NULL OR image_path = '')");
+                    if (appliedFilters.isFavorite) conditions.push("is_favorite = 1");
+
+                    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+                    const total = db.prepare(`SELECT COUNT(*) as count FROM actors ${whereClause}`).get(...params).count;
+                    setTotalItems(total);
+                    const totalP = Math.ceil(total / ITEMS_PER_PAGE) || 1;
+                    setTotalPages(totalP);
+                    let targetPage = Math.min(currentPage, totalP);
+                    if (targetPage < 1) targetPage = 1; 
+                    const offset = (targetPage - 1) * ITEMS_PER_PAGE;
+
+                    let orderBy = 'actor_number DESC';
+                    switch (sortOrder) {
+                        case 'number_asc': orderBy = 'actor_number ASC'; break;
+                        case 'name_asc': orderBy = 'name ASC'; break;
+                        case 'name_desc': orderBy = 'name DESC'; break;
+                    }
+
+                    const rows = db.prepare(`
+                        SELECT a.*, (SELECT COUNT(*) FROM work_actor_link wal WHERE wal.actor_id = a.id) as work_count 
+                        FROM actors a ${whereClause} 
+                        ORDER BY ${orderBy} 
+                        LIMIT ? OFFSET ?
+                    `).all(...params, ITEMS_PER_PAGE, offset);
+
+                    const timestamp = Date.now();
+                    setActors(rows.map(r => ({ ...r, cacheBust: timestamp })));
+                    // setCurrentPage(targetPage); // 由 useEffect 控制
                 }
-                if (appliedFilters.noImage) conditions.push("(image_path IS NULL OR image_path = '')");
-                if (appliedFilters.isFavorite) conditions.push("is_favorite = 1");
-
-                const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-                const total = db.prepare(`SELECT COUNT(*) as count FROM actors ${whereClause}`).get(...params).count;
-                setTotalItems(total);
-                const totalP = Math.ceil(total / ITEMS_PER_PAGE) || 1;
-                setTotalPages(totalP);
-                let targetPage = Math.min(currentPage, totalP);
-                if (targetPage < 1) targetPage = 1; 
-                const offset = (targetPage - 1) * ITEMS_PER_PAGE;
-
-                let orderBy = 'actor_number DESC';
-                switch (sortOrder) {
-                    case 'number_asc': orderBy = 'actor_number ASC'; break;
-                    case 'name_asc': orderBy = 'name ASC'; break;
-                    case 'name_desc': orderBy = 'name DESC'; break;
-                }
-
-                // 修改: 增加子查詢計算作品數量 (work_count)
-                const rows = db.prepare(`
-                    SELECT a.*, (SELECT COUNT(*) FROM work_actor_link wal WHERE wal.actor_id = a.id) as work_count 
-                    FROM actors a ${whereClause} 
-                    ORDER BY ${orderBy} 
-                    LIMIT ? OFFSET ?
-                `).all(...params, ITEMS_PER_PAGE, offset);
-
-                const timestamp = Date.now();
-                setActors(rows.map(r => ({ ...r, cacheBust: timestamp })));
-                setCurrentPage(targetPage);
             } catch (err) {
                 console.error(err);
-                alert(`查詢錯誤: ${err.message}`); // 顯式提示錯誤, 方便除錯
+                alert(`查詢錯誤: ${err.message}`); 
                 setIsLoading(false);
             }
             setIsLoading(false);
         }, 50);
     };
 
-    React.useEffect(() => { setCurrentPage(1); }, [appliedFilters, sortOrder]);
-    React.useEffect(() => { loadActors(); }, [currentPage, appliedFilters, sortOrder]);
+    React.useEffect(() => { setCurrentPage(1); }, [appliedFilters, sortOrder, viewMode]);
+    React.useEffect(() => { loadActors(); }, [currentPage, appliedFilters, sortOrder, viewMode]);
 
-    const handleApply = () => { setAppliedFilters({ ...uiFilters }); };
+    const handleApply = () => { 
+        setViewMode('normal'); 
+        setAppliedFilters({ ...uiFilters }); 
+    };
+    
     const handleClear = () => {
         const empty = { name: '', code: '', noImage: false, isFavorite: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
+        setViewMode('normal');
+    };
+
+    const handleFindDuplicates = () => {
+        // 清除其他篩選條件，專注於顯示重複項
+        const empty = { name: '', code: '', noImage: false, isFavorite: false };
+        setUiFilters(empty);
+        setAppliedFilters(empty);
+        setViewMode('duplicates');
+    };
+
+    // 新增: 批次處理名稱 (僅提取別名，保留名字)
+    const handleBatchCleanNames = () => {
+        if (!db) return;
+        if (!confirm('確定要執行「自動提取別名」嗎？\n\n系統將掃描所有演員：\n1. 將「名字 (別名)」中的別名提取到別名欄位\n2. 演員的顯示名稱將【維持不變】\n\n此操作涉及大量資料修改。')) return;
+
+        setIsLoading(true);
+        setTimeout(() => {
+            try {
+                let updatedCount = 0;
+                db.transaction(() => {
+                    const allActors = db.prepare('SELECT id, name, aliases FROM actors WHERE is_deleted = 0').all();
+                    
+                    for (const actor of allActors) {
+                        const parsed = parseNameWithAliases(actor.name);
+                        
+                        // 如果有提取出別名 (parsed.aliases 長度 > 0)
+                        if (parsed.aliases.length > 0) {
+                            const currentAliases = actor.aliases ? actor.aliases.split(/[,\uff0c]/).map(s => s.trim()).filter(s => s) : [];
+                            // 計算合併後的別名清單
+                            const mergedAliasesList = [...new Set([...currentAliases, ...parsed.aliases])];
+                            
+                            // 只有當別名數量增加時才更新 (避免重複執行浪費資源)
+                            if (mergedAliasesList.length > currentAliases.length) {
+                                const mergedAliases = mergedAliasesList.join(',');
+                                // 只更新別名，不變更名字
+                                db.prepare('UPDATE actors SET aliases = ? WHERE id = ?').run(mergedAliases, actor.id);
+                                updatedCount++;
+                            }
+                        }
+                    }
+                })();
+                
+                alert(`處理完成！共更新了 ${updatedCount} 位演員的別名資料。`);
+                loadActors(); // 重新整理列表
+            } catch (e) {
+                console.error(e);
+                alert('處理失敗: ' + e.message);
+            } finally {
+                setIsLoading(false);
+            }
+        }, 100);
     };
 
     const handleDelete = (id) => {
@@ -484,13 +597,11 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
         } catch (e) { console.error(e); }
     };
 
-    // 新增: 處理最愛切換
     const handleToggleFavorite = (id, currentStatus) => {
         if (!db) return;
         const newStatus = currentStatus ? 0 : 1;
         try {
             db.prepare('UPDATE actors SET is_favorite = ? WHERE id=?').run(newStatus, id);
-            // 本地更新狀態, 無需重新讀取整個列表, 提升效能
             setActors(prev => prev.map(a => a.id === id ? { ...a, is_favorite: newStatus } : a));
         } catch (e) {
             console.error(e);
@@ -504,43 +615,71 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                 <h3 style=${{ marginTop: 0, marginBottom: '16px' }}>演員篩選</h3>
                 <div className="filter-group">
                     <label className="filter-label">演員姓名</label>
-                    <input className="filter-input" value=${uiFilters.name} onInput=${e => setUiFilters({ ...uiFilters, name: e.target.value })} placeholder="搜尋姓名或別名..." />
-                    <${SearchHelpText} />
+                    <input className="filter-input" value=${uiFilters.name} onInput=${e => setUiFilters({ ...uiFilters, name: e.target.value })} placeholder="搜尋姓名或別名..." disabled=${viewMode === 'duplicates'} />
+                    ${viewMode !== 'duplicates' && html`<${SearchHelpText} />`}
                 </div>
                 <div className="filter-group">
                     <label className="filter-label">演員編號</label>
-                    <input className="filter-input" value=${uiFilters.code} onInput=${e => setUiFilters({ ...uiFilters, code: e.target.value })} placeholder="例如: No.0001" />
-                    <${SearchHelpText} />
+                    <input className="filter-input" value=${uiFilters.code} onInput=${e => setUiFilters({ ...uiFilters, code: e.target.value })} placeholder="例如: No.0001" disabled=${viewMode === 'duplicates'} />
                 </div>
                 <div className="filter-group">
                     <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                        <input type="checkbox" checked=${uiFilters.isFavorite} onChange=${e => setUiFilters({ ...uiFilters, isFavorite: e.target.checked })} style=${{ marginRight: 8 }} />
+                        <input type="checkbox" checked=${uiFilters.isFavorite} onChange=${e => setUiFilters({ ...uiFilters, isFavorite: e.target.checked })} style=${{ marginRight: 8 }} disabled=${viewMode === 'duplicates'} />
                         關注演員
                     </label>
                 </div>
                 <div className="filter-group">
                     <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                        <input type="checkbox" checked=${uiFilters.noImage} onChange=${e => setUiFilters({ ...uiFilters, noImage: e.target.checked })} style=${{ marginRight: 8 }} />
+                        <input type="checkbox" checked=${uiFilters.noImage} onChange=${e => setUiFilters({ ...uiFilters, noImage: e.target.checked })} style=${{ marginRight: 8 }} disabled=${viewMode === 'duplicates'} />
                         尚缺圖片
                     </label>
                 </div>
                 <div className="sidebar-actions">
-                    <button className="btn-block" style=${{ flex: 1 }} onClick=${handleApply}>套用篩選</button>
+                    <button className="btn-block" style=${{ flex: 1 }} onClick=${handleApply} disabled=${viewMode === 'duplicates'}>套用篩選</button>
                     <button className="btn-block" style=${{ flex: 1 }} onClick=${handleClear}>清除篩選</button>
+                </div>
+                
+                <hr style=${{ margin: '16px 0', borderTop: '1px solid #eee' }} />
+                
+                <h4 style=${{ margin: '0 0 10px 0', fontSize: '14px', color: '#666' }}>進階功能</h4>
+                <div className="sidebar-actions">
+                    <button className=${viewMode === 'duplicates' ? "btn-primary" : "btn-block"} style=${{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${handleFindDuplicates} disabled=${viewMode === 'duplicates'}>
+                        <${Zap} size=${16} style=${{ marginRight: 6 }} />
+                        尋找相似名稱
+                    </button>
                 </div>
             </div>
             <div className="content-area">
                 <div className="content-header">
-                    <div className="result-info">搜尋結果: 共${totalItems} 位</div>
-                    <div style=${{ fontSize: '12px', color: '#666' }}>條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.noImage || appliedFilters.isFavorite ? '篩選中' : '所有演員'}</div>
+                    <div className="result-info">
+                        ${viewMode === 'duplicates' 
+                            ? html`<span style=${{color: '#d32f2f', fontWeight: 'bold', display:'flex', alignItems:'center'}}><${AlertTriangle} size=${16} style=${{marginRight:6}}/> 相似名稱搜尋結果: ${totalItems} 位</span>`
+                            : html`搜尋結果: 共${totalItems} 位`
+                        }
+                    </div>
+                    <div style=${{ fontSize: '12px', color: '#666' }}>
+                        ${viewMode === 'duplicates' 
+                            ? html`模式: 潛在重複分析 (依名稱排序)` 
+                            : html`條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.noImage || appliedFilters.isFavorite ? '篩選中' : '所有演員'}`
+                        }
+                    </div>
                     <div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        ${viewMode === 'duplicates' && html`
+                            <button className="btn-block" onClick=${handleClear} style=${{ marginRight: 8 }}>
+                                <${RefreshCw} size=${16} style=${{ marginRight: 4 }} />
+                                返回所有演員
+                            </button>
+                        `}
                         <button className="btn-primary" onClick=${() => { setEditingActorId(null); setIsModalOpen(true); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增演員</button>
-                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)}>
+                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
                             <option value="name_asc">依名字 (由小到大)</option>
                             <option value="name_desc">依名字 (由大到小)</option>
                         </select>
+                        <button className="btn-ghost" title="批次提取別名 (不修改顯示名稱)" style=${{ padding: '6px' }} onClick=${handleBatchCleanNames} disabled=${viewMode === 'duplicates'}>
+                            <${Wand2} size=${20} />
+                        </button>
                     </div>
                 </div>
                 <div className="card-grid" style=${{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>

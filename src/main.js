@@ -1,7 +1,7 @@
 /*
 • TPOS (The Pile of Shame) 軟體開發 - Main Process
-• 版本: V1.3.2
-• 修正: 新增 ffprobe設定, 解決無法讀取影片資訊的問題
+• 版本: V1.3.3
+• 修正: 隱藏原生選單列以修復輸入框無法輸入文字的焦點問題 (Input Focus Fix)
 */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -62,8 +62,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: "The Pile of Shame (V1.3.2)", // 更新標題
-    autoHideMenuBar: false,
+    title: "The Pile of Shame (V1.3.3)", // 更新標題
+    autoHideMenuBar: true, // 修改: 自動隱藏選單列
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -72,6 +72,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     }
   });
+
+  // 修改: 強制移除原生選單，解決 Windows 下 Alt 鍵導致的輸入框焦點卡死問題
+  mainWindow.removeMenu();
 
   remoteMain.enable(mainWindow.webContents);
   mainWindow.maximize();

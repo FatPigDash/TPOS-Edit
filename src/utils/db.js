@@ -34,6 +34,8 @@ const dataDir = path.dirname(dbPath);
 let db;
 try {
     db = new betterSqlite3(dbPath);
+    // 啟用 WAL 模式可以增加併發寫入的穩定性 (選用)
+    db.pragma('journal_mode = WAL'); 
 } catch (err) {
     console.error('資料庫連線失敗', err);
     alert("資料庫連線失敗:" + err.message + "\n路徑:" + dbPath);
@@ -49,8 +51,11 @@ function initDB() {
             const hasFavorite = tableInfo.some(col => col.name === 'is_favorite');
             if (!hasFavorite) {
                 db.prepare("ALTER TABLE actors ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
+                console.log("Migration Success: Added is_favorite column");
             }
-        } catch (e) { console.error("Migration Error (is_favorite):", e); }
+        } catch (e) { 
+            console.error("Migration Error (is_favorite):", e); 
+        }
 
         // V1.3.0 更新: 檢查並新增 actors 表的 aliases 欄位
         try {
@@ -58,8 +63,13 @@ function initDB() {
             const hasAliases = tableInfo.some(col => col.name === 'aliases');
             if (!hasAliases) {
                 db.prepare("ALTER TABLE actors ADD COLUMN aliases TEXT").run();
+                console.log("Migration Success: Added aliases column");
             }
-        } catch (e) { console.error("Migration Error (aliases):", e); }
+        } catch (e) { 
+            console.error("Migration Error (aliases):", e);
+            // 讓使用者知道資料庫升級失敗，方便除錯
+            alert("資料庫升級失敗 (aliases): " + e.message + "\n請嘗試重啟軟體。");
+        }
 
         // 建立資料表
         db.exec(`
@@ -125,8 +135,14 @@ function initDB() {
             CREATE INDEX IF NOT EXISTS idx_works_name ON works (name);
             CREATE INDEX IF NOT EXISTS idx_works_number ON works (work_number);
         `);
-    } catch (err) { console.error('DB Init Failed:', err); }
+    } catch (err) { 
+        console.error('DB Init Failed:', err); 
+        alert("資料庫初始化失敗: " + err.message);
+    }
 }
+
+// 強制在載入時就執行初始化，確保欄位存在
+initDB();
 
 module.exports = {
     db,

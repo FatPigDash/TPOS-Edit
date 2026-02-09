@@ -21,48 +21,117 @@ function getNewActorNumber(db) {
     } catch (e) { return 'No.' + Date.now().toString().slice(-4); }
 }
 
+// 新增: 解析名稱與括號別名 (供 UI 與 批次功能共用)
+function parseNameWithAliases(rawName) {
+    if (!rawName) return { name: '', aliases: [] };
+
+    const extractedAliases = [];
+    
+    // 1. 提取括號內的內容
+    const regex = /\(([^)]+)\)/g;
+    let match;
+    while ((match = regex.exec(rawName)) !== null) {
+        const alias = match[1].trim();
+        if (alias) extractedAliases.push(alias);
+    }
+
+    // 2. 移除括號與內容，取得乾淨的主名稱
+    const cleanName = rawName.replace(/\s*\([^)]+\)/g, '').trim();
+
+    return {
+        name: cleanName || rawName.trim(), // 如果刪光了(罕見)，就回傳原字串
+        aliases: extractedAliases
+    };
+}
+
+// 智慧比對演員 (核心邏輯更新)
+function findSmartMatchActor(db, rawName) {
+    if (!db || !rawName) return null;
+    
+    // 1. 產生候選關鍵字清單 (Candidate Keywords)
+    const candidates = new Set();
+    
+    // 使用新的解析函式來取得拆解後的名稱
+    const parsed = parseNameWithAliases(rawName);
+    
+    // A. 原始輸入
+    candidates.add(rawName.trim());
+    // B. 主名稱
+    if (parsed.name) candidates.add(parsed.name);
+    // C. 括號內的別名
+    parsed.aliases.forEach(a => candidates.add(a));
+
+    // 2. 針對每個候選字進行資料庫比對
+    const candidateArray = Array.from(candidates);
+    
+    for (const keyword of candidateArray) {
+        if (!keyword) continue;
+
+        // 步驟 2-1: 比對「姓名 (name)」欄位 (完全一致)
+        const nameMatch = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(keyword);
+        if (nameMatch) return nameMatch.id;
+
+        // 步驟 2-2: 比對「別名 (aliases)」欄位 (包含搜尋)
+        const aliasCandidates = db.prepare('SELECT id, aliases FROM actors WHERE aliases LIKE ? AND is_deleted = 0').all(`%${keyword}%`);
+        
+        for (const row of aliasCandidates) {
+            if (row.aliases) {
+                // 將資料庫的 "A, B, C" 拆開來精確比對
+                const dbAliases = row.aliases.split(/[,，]/).map(s => s.trim());
+                if (dbAliases.includes(keyword)) {
+                    return row.id;
+                }
+            }
+        }
+    }
+
+    return null; // 真的找不到
+}
+
 function getOrCreateActorId(db, name) {
     if (!db) return null;
     const trimmed = name.trim();
     if (!trimmed) return null;
-    const existing = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(trimmed);
-    if (existing) return existing.id;
 
+    // V1.3.0 更新: 使用智慧比對邏輯
+    // 1. 先嘗試尋找是否存在 (包含別名、括號分析)
+    const existingId = findSmartMatchActor(db, trimmed);
+    if (existingId) return existingId;
+
+    // 2. 若真的不存在，則建立新演員
+    // 注意: 這裡我們仍然儲存原始的完整名稱 (包含括號)，讓使用者後續決定是否編輯
+    // 若希望自動拆解，需在呼叫端處理，或是修改此處。
+    // 依據目前需求，自動拆解是在「UI手動新增」與「批次按鈕」觸發，Scraper 匯入暫保持原樣以免誤判
     const actorNumber = getNewActorNumber(db);
     const info = db.prepare('INSERT INTO actors (actor_number, name, created_at, is_favorite) VALUES (?, ?, ?, 0)').run(actorNumber, trimmed, Date.now());
     return info.lastInsertRowid;
 }
 
 // 搜尋語法解析器 (+為AND, | 為OR, -為NOT)
-// 優化: 改用空白分詞，避免將單字中間的連字號(如 ABC-123)誤判為排除運算子
 function parseSearchQuery(input, dbField) {
     if (!input || !input.trim()) return { sql: "", params: [] };
-    const orGroups = input.split(' | '); // OR logic
+    const orGroups = input.split(' | ');
     const sqlParts = [];
     const params = [];
 
     orGroups.forEach(group => {
-        // 使用空白切割單詞，保留單字內部的符號
-        const rawTokens = group.trim().split(/\s+/); 
+        const tokens = group.split(/([+\-])/); // 保留分隔符
         const groupConditions = [];
-        
-        rawTokens.forEach(token => {
+        let currentOp = '+';
+
+        tokens.forEach(token => {
             const trimmed = token.trim();
             if (!trimmed) return;
-            
-            // 檢查開頭是否有運算子 (且長度大於1，避免只有一個 + 或 - 的情況)
-            if (trimmed.startsWith('-') && trimmed.length > 1) {
-                // NOT logic (e.g. "-keyword")
-                groupConditions.push(`${dbField} NOT LIKE ?`);
-                params.push(`%${trimmed.slice(1)}%`);
-            } else if (trimmed.startsWith('+') && trimmed.length > 1) {
-                // AND logic explicit (e.g. "+keyword")
-                groupConditions.push(`${dbField} LIKE ?`);
-                params.push(`%${trimmed.slice(1)}%`);
+            if (trimmed === '+' || trimmed === '-') {
+                currentOp = trimmed;
             } else {
-                // Default AND logic (e.g. "keyword" or "HUNTA-645")
-                groupConditions.push(`${dbField} LIKE ?`);
-                params.push(`%${trimmed}%`);
+                if (currentOp === '-') {
+                    groupConditions.push(`${dbField} NOT LIKE ?`);
+                    params.push(`%${trimmed}%`);
+                } else {
+                    groupConditions.push(`${dbField} LIKE ?`);
+                    params.push(`%${trimmed}%`);
+                }
             }
         });
 
@@ -106,6 +175,8 @@ module.exports = {
     getFileUrl,
     getNewActorNumber,
     getOrCreateActorId,
+    findSmartMatchActor,
+    parseNameWithAliases, // Export New Function
     parseSearchQuery,
     hexToRgb,
     getDragAfterElement,
