@@ -1,7 +1,7 @@
 /*
 • TPOS (The Pile of Shame) 軟體開發 - Main Process
 • 版本: V1.3.3
-• 修正: 隱藏原生選單列以修復輸入框無法輸入文字的焦點問題 (Input Focus Fix)
+• 修正: 調整 get-video-metadata 回傳格式 (純數字時長), 加強錯誤處理
 */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
@@ -11,15 +11,22 @@ const fs = require('fs');
 // 引入 ffmpeg 與 ffprobe 相關套件
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
-const ffprobePath = require('ffprobe-static'); // 新增這行
+const ffprobePath = require('ffprobe-static');
 
 // 設定 ffmpeg 與 ffprobe 執行檔路徑
 // replace 是為了處理 Electron 打包後(asar)的路徑問題
+const fixPath = (pathStr) => {
+  return pathStr ? pathStr.replace('app.asar', 'app.asar.unpacked') : pathStr;
+};
+
 if (ffmpegPath) {
-  ffmpeg.setFfmpegPath(ffmpegPath.replace('app.asar', 'app.asar.unpacked'));
+  ffmpeg.setFfmpegPath(fixPath(ffmpegPath));
 }
+
 if (ffprobePath && ffprobePath.path) {
-  ffmpeg.setFfprobePath(ffprobePath.path.replace('app.asar', 'app.asar.unpacked')); // 新增這行
+  ffmpeg.setFfprobePath(fixPath(ffprobePath.path));
+} else {
+  console.warn("警告: 找不到 ffprobe-static 路徑，影片資訊讀取功能可能失效。");
 }
 
 // 初始化 remote 模組
@@ -53,7 +60,6 @@ function initDatabase() {
     tempDb.close();
   } catch (error) {
     log(`Database Error: ${error.message}`);
-    // dialog.showErrorBox 可能會阻擋啟動, 這裡僅記錄錯誤
     console.error(`無法連接資料庫: ${error.message}`);
   }
 }
@@ -63,7 +69,7 @@ function createWindow() {
     width: 1280,
     height: 800,
     title: "The Pile of Shame (V1.3.3)", // 更新標題
-    autoHideMenuBar: true, // 修改: 自動隱藏選單列
+    autoHideMenuBar: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -72,9 +78,6 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     }
   });
-
-  // 修改: 強制移除原生選單，解決 Windows 下 Alt 鍵導致的輸入框焦點卡死問題
-  mainWindow.removeMenu();
 
   remoteMain.enable(mainWindow.webContents);
   mainWindow.maximize();
@@ -88,40 +91,49 @@ function createWindow() {
 // IPC: 讀取影片資訊
 ipcMain.handle('get-video-metadata', async (event, filePath) => {
   return new Promise((resolve, reject) => {
+    if (!filePath) {
+      reject(new Error("File path is empty"));
+      return;
+    }
+
     // 使用 ffprobe 讀取檔案
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
         console.error("FFprobe Error:", err);
-        reject(err);
+        reject(new Error(`FFprobe failed: ${err.message}`));
         return;
       }
-      // 尋找視訊軌
-      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
-      if (!videoStream) {
-        reject(new Error("No video stream found"));
-        return;
+      
+      try {
+        // 尋找視訊軌
+        const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+        if (!videoStream) {
+          reject(new Error("No video stream found"));
+          return;
+        }
+
+        const width = videoStream.width;
+        const height = videoStream.height;
+        const durationSec = metadata.format.duration || videoStream.duration || 0;
+
+        // 格式化解析度
+        let resolution = `${width}x${height}`;
+        if (width === 1920 && height === 1080) resolution = "1080p (FHD)";
+        else if (width === 3840 && height === 2160) resolution = "4K (UHD)";
+        else if (width === 1280 && height === 720) resolution = "720p (HD)";
+        
+        // 格式化時間 (四捨五入到分鐘)
+        // 修改: 僅回傳數字，不帶單位
+        const durationMinutes = Math.round(durationSec / 60);
+
+        resolve({
+          resolution: resolution,
+          duration: durationMinutes
+        });
+      } catch (processErr) {
+        console.error("Metadata Processing Error:", processErr);
+        reject(processErr);
       }
-
-      const width = videoStream.width;
-      const height = videoStream.height;
-      const durationSec = metadata.format.duration || videoStream.duration;
-
-      // 格式化解析度
-      let resolution = `${width}x${height}`;
-      if (width === 1920 && height === 1080) resolution = "1080p (FHD)";
-      else if (width === 3840 && height === 2160) resolution = "4K (UHD)";
-      else if (width === 1280 && height === 720) resolution = "720p (HD)";
-      else resolution = `${width}x${height}`; // 自訂格式
-
-      // 格式化時間 (四捨五入到分鐘)
-      // 若 125秒 = 2.08分 -> 2分
-      // 若 150秒 = 2.5分 -> 3分
-      const durationMinutes = Math.round(durationSec / 60);
-
-      resolve({
-        resolution: resolution,
-        duration: `${durationMinutes}分鐘`
-      });
     });
   });
 });

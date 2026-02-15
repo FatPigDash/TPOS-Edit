@@ -178,8 +178,8 @@ function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
             </div>
 
             <div className="filter-group">
-                <label className="filter-label">評分 (大於或等於)</label>
-                <input type="text" className="filter-input" value=${uiFilters.rating} onInput=${e => setUiFilters({ ...uiFilters, rating: e.target.value })} placeholder="例如: 4.0" />
+                <label className="filter-label">評分 (最高5分, 大於或等於判定)</label>
+                <input type="number" step="0.1" className="filter-input" value=${uiFilters.rating} onInput=${e => setUiFilters({ ...uiFilters, rating: e.target.value })} placeholder="例如: 4.0" />
             </div>
 
             <div className="filter-group">
@@ -461,11 +461,27 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
                                 const isRealActor = !!actor.actor_id;
+                                const hasImage = !!actor.image_path;
+
+                                let bgColor = '#e3f2fd';
+                                let textColor = '#333';
+
+                                if (isRealActor) {
+                                    if (hasImage) {
+                                        bgColor = '#e3f2fd';
+                                        textColor = '#2196F3';
+                                    } else {
+                                        bgColor = '#fff9c4'; // Light yellow
+                                        textColor = '#e65100'; // Dark Orange/Red
+                                    }
+                                }
+
                                 return html`<span 
-                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
-                                    onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
+                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: bgColor, color: textColor, cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal', display: 'inline-flex', alignItems: 'center' }} 
+                                    onClick=${() => isRealActor && hasImage && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
+                                    ${isRealActor && !hasImage && html`<${AlertTriangle} size=${14} style=${{ marginRight: 4 }} />`}
                                     ${actor.name}
                                 </span>`;
                             })}
@@ -674,8 +690,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (!db) return;
         if (!formData.work_number || !formData.name) return alert('編號與名稱必填');
 
-        // 修改: 移除 parseFloat 強制轉換，直接儲存字串以保留格式 (例如 5.0)
-        const ratingVal = formData.rating.trim() === '' ? null : formData.rating.trim();
+        const ratingVal = formData.rating.trim() === '' ? null : parseFloat(formData.rating);
 
         setIsLoading(true);
         setTimeout(() => {
@@ -817,7 +832,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         <label className="filter-label">演員</label>
                         <${ActorSelector} selectedActors=${selectedActors} onChange=${setSelectedActors} inputValue=${actorInputValue} onInputChange=${setActorInputValue} />
                     </div>
-                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="text" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
+                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="number" step="0.1" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
                     
                     <div className="filter-group" style=${{ borderTop: '1px solid #eee', paddingTop: 20 }}>
                         <${TagSelector} selectedTags=${selectedTags} onChange=${setSelectedTags} />
