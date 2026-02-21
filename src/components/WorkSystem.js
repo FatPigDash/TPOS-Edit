@@ -7,7 +7,7 @@ const { webUtils, ipcRenderer } = require('electron');
 const {
     Search, ChevronDown, ChevronRight: ChevronRightIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
-    Save, Plus, Trash2, Download, PanelLeft
+    Save, Plus, Trash2, Download, PanelLeft, Bookmark
 } = require('lucide-react');
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
@@ -200,6 +200,20 @@ function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
                 <${SearchHelpText} />
             </div>
 
+            <div className="filter-group">
+                <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input type="checkbox" checked=${uiFilters.favoriteActor || false} onChange=${e => setUiFilters({ ...uiFilters, favoriteActor: e.target.checked })} style=${{ marginRight: 8 }} />
+                    關注演員
+                </label>
+            </div>
+
+            <div className="filter-group">
+                <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input type="checkbox" checked=${uiFilters.watchlist || false} onChange=${e => setUiFilters({ ...uiFilters, watchlist: e.target.checked })} style=${{ marginRight: 8 }} />
+                    待看關注
+                </label>
+            </div>
+
             <${TagFilterSidebar} selectedTagIds=${uiFilters.tags} onChange=${newTags => setUiFilters({ ...uiFilters, tags: newTags })} />
 
             <div className="sidebar-actions" style=${{ display: 'flex', gap: '8px', marginTop: '24px', paddingBottom: '8px' }}>
@@ -328,7 +342,6 @@ function TagSelector({ selectedTags, onChange }) {
             `)}
         </div>`;
 }
-
 // 8. 作品系統元件 (Work System)
 
 function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply, onClear }) {
@@ -461,27 +474,11 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
                                 const isRealActor = !!actor.actor_id;
-                                const hasImage = !!actor.image_path;
-
-                                let bgColor = '#e3f2fd';
-                                let textColor = '#333';
-
-                                if (isRealActor) {
-                                    if (hasImage) {
-                                        bgColor = '#e3f2fd';
-                                        textColor = '#2196F3';
-                                    } else {
-                                        bgColor = '#fff9c4'; // Light yellow
-                                        textColor = '#e65100'; // Dark Orange/Red
-                                    }
-                                }
-
                                 return html`<span 
-                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: bgColor, color: textColor, cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal', display: 'inline-flex', alignItems: 'center' }} 
-                                    onClick=${() => isRealActor && hasImage && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
+                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
+                                    onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
-                                    ${isRealActor && !hasImage && html`<${AlertTriangle} size=${14} style=${{ marginRight: 4 }} />`}
                                     ${actor.name}
                                 </span>`;
                             })}
@@ -490,6 +487,8 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                     </div>
 
                     <div className="filter-group"><label className="filter-label">評分</label><div style=${{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 0', fontSize: '18px', fontWeight: 'bold', color: '#fbc02d' }}><${Star} size=${20} fill="#fbc02d" /> ${work.rating !== null && work.rating !== undefined ? work.rating : '尚未評分'}</div></div>
+
+                    <div className="filter-group"><label className="filter-label">待看關注</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '4px' }}>${work.is_watchlist ? html`<${Bookmark} size=${20} color="#e91e63" fill="#e91e63" /> <span style=${{ color: '#e91e63', fontWeight: 'bold' }}>已標記</span>` : html`<span style=${{ color: '#999' }}>未標記</span>`}</div></div>
 
                     <div className="filter-group">
                         <label className="filter-label">標籤</label>
@@ -520,7 +519,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
 
 function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const isEditMode = !!initialWorkId;
-    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '' });
+    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_watchlist: 0 });
     const [images, setImages] = React.useState([]);
     const [deletedImageIds, setDeletedImageIds] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
@@ -540,7 +539,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (isEditMode) {
             try {
                 const work = db.prepare('SELECT * FROM works WHERE id=?').get(initialWorkId);
-                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '' });
+                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_watchlist: work.is_watchlist || 0 });
 
                 const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(initialWorkId).map(row => ({
                     id: Date.now() + Math.random(),
@@ -558,10 +557,10 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 const linkedT = db.prepare('SELECT t.id, t.name, t.color, t.group_id FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id WHERE wtl.work_id = ?').all(initialWorkId);
                 setSelectedTags(linkedT);
 
-                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '' }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
+                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_watchlist: work.is_watchlist || 0 }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
             } catch (err) { }
         } else {
-            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '' }, images: '[]', actors: '[]', tags: '[]' });
+            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_watchlist: 0 }, images: '[]', actors: '[]', tags: '[]' });
         }
     }, [initialWorkId]);
 
@@ -700,9 +699,9 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     const saveData = { ...formData, rating: ratingVal };
 
                     if (isEditMode) {
-                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating WHERE id=@id`).run({ ...saveData, id: workId });
+                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_watchlist=@is_watchlist WHERE id=@id`).run({ ...saveData, id: workId });
                     } else {
-                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
+                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, is_watchlist, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @is_watchlist, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
                     }
 
                     if (deletedImageIds.length > 0) {
@@ -834,6 +833,13 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     </div>
                     <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="number" step="0.1" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
                     
+                    <div className="filter-group" style=${{ padding: '8px 0', marginBottom: '8px' }}>
+                        <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', margin: 0 }}>
+                            <input type="checkbox" checked=${!!formData.is_watchlist} onChange=${e => handleChange('is_watchlist', e.target.checked ? 1 : 0)} style=${{ marginRight: 8 }} />
+                            待看關注
+                        </label>
+                    </div>
+
                     <div className="filter-group" style=${{ borderTop: '1px solid #eee', paddingTop: 20 }}>
                         <${TagSelector} selectedTags=${selectedTags} onChange=${setSelectedTags} />
                     </div>
@@ -867,7 +873,13 @@ function WorkCard({ work, onClick }) {
             </div>
             <div className="card-info">
                 <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '4px', marginBottom: '4px', height: '56px', overflow: 'hidden' }}>
-                    <div className="card-id" style=${{ flexShrink: 0, marginTop: '4px' }}>${work.work_number || '[NO ID]'}</div>
+                    <div style=${{ display: 'flex', flexDirection: 'column' }}>
+                        <div className="card-id" style=${{ flexShrink: 0, marginTop: '4px' }}>${work.work_number || '[NO ID]'}</div>
+                        <div style=${{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                            ${work.has_favorite_actor ? html`<${Star} size=${14} color="#fbc02d" fill="#fbc02d" title="包含關注演員" />` : null}
+                            ${work.is_watchlist ? html`<${Bookmark} size=${14} color="#e91e63" fill="#e91e63" title="待看關注" />` : null}
+                        </div>
+                    </div>
                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', alignContent: 'flex-start' }}>
                         ${work.tags && work.tags.map(t => html`
                             <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? '#fff' : '#333', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', height: '26px' }}>
