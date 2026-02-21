@@ -19,6 +19,21 @@ const {
 } = require('./Shared');
 const { ScraperModal } = require('./Scraper');
 
+// 新增: 計算高對比文字顏色 (YIQ公式)
+const getContrastYIQ = (hexcolor) => {
+    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
+    let hex = hexcolor.replace('#', '');
+    if (hex.length === 3) {
+        hex = hex.split('').map(char => char + char).join('');
+    }
+    if (hex.length !== 6) return '#333333';
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? '#000000' : '#ffffff';
+};
+
 // 5. 篩選與選擇元件 (Filter & Selector)
 
 function TagFilterSidebar({ selectedTagIds, onChange }) {
@@ -45,11 +60,11 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
         <div className="tag-filter-sidebar" style=${{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
             <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選 (AND)</div>
             ${groups.map(group => {
-                const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
-                const isExpanded = expandedGroups[group.id];
-                const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
-                
-                return html`
+        const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
+        const isExpanded = expandedGroups[group.id];
+        const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
+
+        return html`
                 <div key=${group.id} style=${{ marginBottom: '4px' }}>
                     <div onClick=${() => toggleGroup(group.id)} style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', backgroundColor: '#f9f9f9', borderRadius: '4px', fontSize: '14px', ...groupStyle }}>
                         ${isExpanded ? html`<${ChevronDown} size=${14} />` : html`<${ChevronRightIcon} size=${14} />`}
@@ -68,14 +83,14 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
                         </div>
                     `}
                 </div>`;
-            })}
+    })}
         </div>`;
 }
 
 function ActorFilter({ value, onChange }) {
     const [suggestions, setSuggestions] = React.useState([]);
     const [showSuggestions, setShowSuggestions] = React.useState(false);
-    
+
     const currentMode = value?.mode || 'OR';
     const currentItems = value?.items || [];
     const inputValue = value?.inputValue || "";
@@ -202,14 +217,14 @@ function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
 
             <div className="filter-group">
                 <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                    <input type="checkbox" checked=${uiFilters.favoriteActor || false} onChange=${e => setUiFilters({ ...uiFilters, favoriteActor: e.target.checked })} style=${{ marginRight: 8 }} />
+                    <input type="checkbox" checked=${uiFilters.hasFavActor || false} onChange=${e => setUiFilters({ ...uiFilters, hasFavActor: e.target.checked })} style=${{ marginRight: 8 }} />
                     關注演員
                 </label>
             </div>
 
             <div className="filter-group">
                 <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                    <input type="checkbox" checked=${uiFilters.watchlist || false} onChange=${e => setUiFilters({ ...uiFilters, watchlist: e.target.checked })} style=${{ marginRight: 8 }} />
+                    <input type="checkbox" checked=${uiFilters.isWatchLater || false} onChange=${e => setUiFilters({ ...uiFilters, isWatchLater: e.target.checked })} style=${{ marginRight: 8 }} />
                     待看關注
                 </label>
             </div>
@@ -255,7 +270,7 @@ function ActorSelector({ selectedActors, onChange, inputValue, onInputChange }) 
         const trimmedName = inputValue.trim();
         const existing = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(trimmedName);
         if (existing) return alert('已存在相同名稱的演員');
-        
+
         const actorId = getOrCreateActorId(db, trimmedName);
         if (actorId) {
             const actorNumber = db.prepare('SELECT actor_number FROM actors WHERE id = ?').get(actorId).actor_number;
@@ -327,15 +342,16 @@ function TagSelector({ selectedTags, onChange }) {
                     <div className="group-title">${group.name}</div>
                     <div className="tag-chips">
                         ${group.tags.map(tag => {
-                            const isSelected = selectedTags.some(t => t.id === tag.id);
-                            const style = tag.color ? { backgroundColor: tag.color, color: '#fff', borderColor: tag.color } : {};
-                            if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
-                            return html`
+        const isSelected = selectedTags.some(t => t.id === tag.id);
+        // 這裡套用 getContrastYIQ 來確保選取後的文字也維持高對比
+        const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
+        if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
+        return html`
                                 <div className="tag-chip ${isSelected ? 'selected' : ''}" style=${style} onClick=${() => toggleTag(tag)}>
                                     ${tag.name}
                                     ${isSelected && html`<${Check} size=${12} style=${{ marginLeft: 4 }} />`}
                                 </div>`;
-                        })}
+    })}
                         ${group.tags.length === 0 && html`<span style=${{ color: '#ccc', fontSize: 12 }}>無標籤</span>`}
                     </div>
                 </div>
@@ -352,24 +368,21 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
     const [linkedActors, setLinkedActors] = React.useState([]);
     const [linkedTags, setLinkedTags] = React.useState([]);
     const [viewingActorImage, setViewingActorImage] = React.useState(null);
-    // 新增: 篩選器側邊欄顯示狀態 (預設收闔)
     const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
 
     React.useEffect(() => {
         if (!db) return;
         try {
             setWork(db.prepare('SELECT * FROM works WHERE id=?').get(workId));
-            
-            // 修正: 讀取圖片後，主動將預覽索引設為封面圖片 (isCover=1)
+
             const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(workId).map(row => ({
                 id: row.id,
                 url: getFileUrl(path.join(worksImgDir, row.file_name)),
                 isCover: row.is_cover === 1
             }));
-            
+
             setImages(loadedImages);
-            
-            // 自動查找封面索引
+
             const coverIndex = loadedImages.findIndex(img => img.isCover);
             if (coverIndex !== -1) {
                 setPreviewIndex(coverIndex);
@@ -382,14 +395,12 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
         } catch (err) { console.error(err); }
     }, [workId]);
 
-    // 中鍵處理邏輯: 演員
     const handleMiddleClickActor = (e, actor) => {
-        if (e.button === 1) { // 1 = 滑鼠中鍵
+        if (e.button === 1) {
             e.preventDefault();
-            if (!actor.actor_id) return; // 僅處理已建立卡片的演員
-            
+            if (!actor.actor_id) return;
+
             const currentActors = uiFilters.actor?.items || [];
-            // 避免重複加入
             if (!currentActors.find(a => a.id === actor.actor_id)) {
                 setUiFilters({
                     ...uiFilters,
@@ -399,24 +410,20 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                     }
                 });
             }
-            // 自動開啟篩選器側邊欄以便檢視
             setIsFilterSidebarOpen(true);
         }
     };
 
-    // 中鍵處理邏輯: 標籤
     const handleMiddleClickTag = (e, tagId) => {
-        if (e.button === 1) { // 1 = 滑鼠中鍵
+        if (e.button === 1) {
             e.preventDefault();
             const currentTags = uiFilters.tags || [];
-            // 避免重複加入
             if (!currentTags.includes(tagId)) {
                 setUiFilters({
                     ...uiFilters,
                     tags: [...currentTags, tagId]
                 });
             }
-            // 自動開啟篩選器側邊欄以便檢視
             setIsFilterSidebarOpen(true);
         }
     };
@@ -473,33 +480,33 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <label className="filter-label">演員</label>
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
-                                const isRealActor = !!actor.actor_id;
-                                return html`<span 
+        const isRealActor = !!actor.actor_id;
+        return html`<span 
                                     style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
                                     onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
                                     ${actor.name}
                                 </span>`;
-                            })}
+    })}
                             ${linkedActors.length === 0 && html`<span style=${{ color: '#999' }}>無關聯演員</span>`}
                         </div>
                     </div>
 
                     <div className="filter-group"><label className="filter-label">評分</label><div style=${{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 0', fontSize: '18px', fontWeight: 'bold', color: '#fbc02d' }}><${Star} size=${20} fill="#fbc02d" /> ${work.rating !== null && work.rating !== undefined ? work.rating : '尚未評分'}</div></div>
 
-                    <div className="filter-group"><label className="filter-label">待看關注</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '4px' }}>${work.is_watchlist ? html`<${Bookmark} size=${20} color="#e91e63" fill="#e91e63" /> <span style=${{ color: '#e91e63', fontWeight: 'bold' }}>已標記</span>` : html`<span style=${{ color: '#999' }}>未標記</span>`}</div></div>
+                    <div className="filter-group"><label className="filter-label">待看關注</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '4px' }}>${work.is_favorite ? html`<${Bookmark} size=${20} color="#e91e63" fill="#e91e63" /> <span style=${{ color: '#e91e63', fontWeight: 'bold' }}>已標記</span>` : html`<span style=${{ color: '#999' }}>未標記</span>`}</div></div>
 
                     <div className="filter-group">
                         <label className="filter-label">標籤</label>
                         <div style=${{ padding: '8px 0' }}>
                             ${groups.map(group => html`
                                 <div style=${{ marginBottom: 8, display: 'flex', alignItems: 'center' }}>
-                                    <span style=${{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', marginRight: 8, fontSize: '12px', fontWeight: 'bold', backgroundColor: group.color || '#eee', color: group.color ? '#fff' : '#333' }}>${group.name}</span>
+                                    <span style=${{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', marginRight: 8, fontSize: '12px', fontWeight: 'bold', backgroundColor: group.color || '#eee', color: group.color ? getContrastYIQ(group.color) : '#333' }}>${group.name}</span>
                                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                         ${group.tags.map(tag => html`<span 
                                             className="tag-chip" 
-                                            style=${tag.color ? { backgroundColor: tag.color, color: '#fff', borderColor: tag.color } : {}}
+                                            style=${tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {}}
                                             onMouseDown=${(e) => handleMiddleClickTag(e, tag.id)}
                                             title="中鍵點擊加入篩選">
                                             ${tag.name}
@@ -519,9 +526,10 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
 
 function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const isEditMode = !!initialWorkId;
-    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_watchlist: 0 });
+    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 });
     const [images, setImages] = React.useState([]);
     const [deletedImageIds, setDeletedImageIds] = React.useState([]);
+    const [selectedImageIds, setSelectedImageIds] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
     const [dragOver, setDragOver] = React.useState(false);
     const [draggingIndex, setDraggingIndex] = React.useState(null);
@@ -531,7 +539,6 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [actorInputValue, setActorInputValue] = React.useState("");
     const [initialState, setInitialState] = React.useState(null);
     const [showDirtyWarning, setShowDirtyWarning] = React.useState(false);
-    // 新增狀態: 自動抓取
     const [isScraperOpen, setIsScraperOpen] = React.useState(false);
 
     React.useEffect(() => {
@@ -539,7 +546,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (isEditMode) {
             try {
                 const work = db.prepare('SELECT * FROM works WHERE id=?').get(initialWorkId);
-                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_watchlist: work.is_watchlist || 0 });
+                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 });
 
                 const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(initialWorkId).map(row => ({
                     id: Date.now() + Math.random(),
@@ -557,10 +564,10 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 const linkedT = db.prepare('SELECT t.id, t.name, t.color, t.group_id FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id WHERE wtl.work_id = ?').all(initialWorkId);
                 setSelectedTags(linkedT);
 
-                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_watchlist: work.is_watchlist || 0 }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
+                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
             } catch (err) { }
         } else {
-            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_watchlist: 0 }, images: '[]', actors: '[]', tags: '[]' });
+            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 }, images: '[]', actors: '[]', tags: '[]' });
         }
     }, [initialWorkId]);
 
@@ -569,59 +576,84 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const processNewFiles = async (fileList) => {
         const files = Array.from(fileList);
         const newImages = [];
+        let hasUnsupported = false;
+
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             let realPath = file.path;
             if (!realPath) try { realPath = webUtils.getPathForFile(file); } catch (err) { }
             if (!realPath) continue;
 
-            // 判斷是否為影片檔案 (基於 MIME type 或副檔名)
-            const isVideo = file.type.startsWith('video/') || ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'].includes(path.extname(realPath).toLowerCase());
-            
+            const ext = path.extname(realPath).toLowerCase();
+            const isVideo = file.type.startsWith('video/') || ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'].includes(ext);
+
             if (isVideo) {
-                // 處理影片: 讀取 Metadata
                 setIsLoading(true);
                 try {
                     const metadata = await ipcRenderer.invoke('get-video-metadata', realPath);
                     setFormData(prev => ({
                         ...prev,
                         resolution: metadata.resolution,
-                        file_size: metadata.duration // 這裡將 duration 寫入 file_size 欄位 (實際檔案長度)
+                        file_size: metadata.duration
                     }));
-                    // alert(`已讀取影片資訊:\n解析度: ${metadata.resolution}\n長度: ${metadata.duration}`);
                 } catch (err) {
                     console.error("Video metadata error:", err);
                     alert("無法讀取影片資訊: " + err.message);
                 } finally {
                     setIsLoading(false);
                 }
-            } else if (['image/jpeg', 'image/png'].includes(file.type)) {
-                // 處理圖片: 加入預覽列表
+            } else if (['image/jpeg', 'image/png'].includes(file.type) || ['.jpg', '.jpeg', '.png'].includes(ext)) {
                 newImages.push({
                     id: Date.now() + Math.random() + i,
                     previewUrl: URL.createObjectURL(file),
                     filePath: realPath,
                     isStored: false
                 });
+            } else {
+                hasUnsupported = true;
             }
         }
+
+        if (hasUnsupported) {
+            alert('上傳失敗：圖片格式不支援');
+        }
+
         if (newImages.length > 0) setImages(prev => [...prev, ...newImages]);
     };
 
     const handleDropUpload = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); if (e.dataTransfer.files.length > 0) processNewFiles(e.dataTransfer.files); };
     const handleSortDrop = (e, targetIndex) => {
-        // 修正: 增加 stopPropagation 防止事件冒泡導致與上傳邏輯衝突
-        e.preventDefault(); 
-        e.stopPropagation(); 
+        e.preventDefault();
+        e.stopPropagation();
         if (draggingIndex === null || draggingIndex === targetIndex) return;
         setImages(prev => { const newList = [...prev]; const [moved] = newList.splice(draggingIndex, 1); newList.splice(targetIndex, 0, moved); return newList; });
         setDraggingIndex(null);
     };
 
     const handleDeleteImage = (index, e) => {
-        e.stopPropagation(); if (!confirm('移除此圖片?')) return;
-        const img = images[index]; if (img.isStored) setDeletedImageIds(p => [...p, img.dbId]);
+        e.stopPropagation();
+        if (!confirm('移除此圖片?')) return;
+        const img = images[index];
+        if (img.isStored) setDeletedImageIds(p => [...p, img.dbId]);
         setImages(p => p.filter((_, i) => i !== index));
+        setSelectedImageIds(p => p.filter(id => id !== img.id));
+    };
+
+    const handleDeleteSelected = (e) => {
+        e.stopPropagation();
+        if (selectedImageIds.length === 0) return;
+        if (!confirm(`確定移除選取的 ${selectedImageIds.length} 張圖片?`)) return;
+
+        const imagesToDelete = images.filter(img => selectedImageIds.includes(img.id));
+        const storedIdsToDelete = imagesToDelete.filter(img => img.isStored).map(img => img.dbId);
+
+        if (storedIdsToDelete.length > 0) {
+            setDeletedImageIds(p => [...p, ...storedIdsToDelete]);
+        }
+
+        setImages(p => p.filter(img => !selectedImageIds.includes(img.id)));
+        setSelectedImageIds([]);
+        setPreviewIndex(0);
     };
 
     const isDirty = () => {
@@ -631,9 +663,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
     const attemptCancel = () => { if (isDirty()) setShowDirtyWarning(true); else onCancel(); };
 
-    // 處理抓取結果
     const handleScrapeResult = (newData) => {
-        // 1. 更新基本欄位
         setFormData(prev => ({
             ...prev,
             name: newData.name || prev.name || '',
@@ -644,7 +674,6 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
             publisher: newData.publisher || prev.publisher || ''
         }));
 
-        // 2. 處理演員資料
         if (newData.actors && Array.isArray(newData.actors)) {
             let currentSelectedActors = [...selectedActors];
             const timestamp = Date.now();
@@ -658,7 +687,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         let actor = db.prepare('SELECT id, actor_number FROM actors WHERE name = ? AND is_deleted = 0').get(trimmedName);
                         let info;
                         let newNumber;
-                        
+
                         if (!actor) {
                             newNumber = getNewActorNumber(db);
                             info = db.prepare('INSERT INTO actors (actor_number, name, created_at, is_favorite) VALUES (?, ?, ?, 0)').run(newNumber, trimmedName, timestamp);
@@ -699,9 +728,9 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     const saveData = { ...formData, rating: ratingVal };
 
                     if (isEditMode) {
-                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_watchlist=@is_watchlist WHERE id=@id`).run({ ...saveData, id: workId });
+                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_favorite=@is_favorite WHERE id=@id`).run({ ...saveData, id: workId });
                     } else {
-                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, is_watchlist, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @is_watchlist, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
+                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, is_favorite, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @is_favorite, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
                     }
 
                     if (deletedImageIds.length > 0) {
@@ -715,7 +744,6 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         });
                     }
 
-                    // 修正: 移除 currentMaxSeq 的計數器依賴，避免與現有檔案衝突
                     const insertImg = db.prepare('INSERT INTO work_images (work_id, file_name, sort_order, is_cover) VALUES (?, ?, ?, ?)');
                     const updateImg = db.prepare('UPDATE work_images SET sort_order = ?, is_cover = ? WHERE id = ?');
 
@@ -724,12 +752,11 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         if (img.isStored) {
                             updateImg.run(idx + 1, isCover, img.dbId);
                         } else {
-                            // 修正: 改用時間戳記+亂數命名，確保檔案名稱唯一，絕對不會覆蓋舊檔
                             const ext = path.extname(img.filePath);
                             const timestamp = Date.now();
                             const randomSuffix = Math.floor(Math.random() * 10000);
                             const newName = `works_${formData.work_number}_${timestamp}_${randomSuffix}${ext}`;
-                            
+
                             fs.copyFileSync(img.filePath, path.join(worksImgDir, newName));
                             insertImg.run(workId, newName, idx + 1, isCover);
                         }
@@ -781,14 +808,22 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         <div className="main-layout">
             <div className="sidebar" style=${{ width: '50%' }}>
                 <div className="editor-gallery ${dragOver ? 'drag-over' : ''}" onDragOver=${e => { e.preventDefault(); setDragOver(true); }} onDragLeave=${() => setDragOver(false)} onDrop=${handleDropUpload}>
-                    <h3 style=${{ margin: '0 0 10px 0' }}>圖片管理 (${images.length})</h3>
+                    <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <h3 style=${{ margin: 0 }}>圖片管理 (${images.length})</h3>
+                        ${selectedImageIds.length > 0 && html`
+                            <button className="btn-block" onClick=${handleDeleteSelected} style=${{ backgroundColor: '#dc3545', color: 'white', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '13px' }}>
+                                <${Trash2} size=${14} style=${{ marginRight: '6px' }} /> 刪除已選擇 (${selectedImageIds.length})
+                            </button>
+                        `}
+                    </div>
                     <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' }}>
                         ${images[previewIndex] ? html`<img src="${images[previewIndex].previewUrl}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
                     </div>
                     <div className="thumbnail-list" style=${{ flex: 1, minHeight: '120px', gridTemplateColumns: 'repeat(auto-fill, 160px)', overflowY: 'auto' }}>
                         ${images.map((img, idx) => html`
-                            <div key=${img.id} className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" draggable="true" onDragStart=${() => setDraggingIndex(idx)} onDragOver=${e => e.preventDefault()} onDrop=${e => handleSortDrop(e, idx)} onClick=${() => setPreviewIndex(idx)} style=${{ height: '100px', width: '160px' }}>
-                                <img src="${img.previewUrl}" style=${{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <div key=${img.id} className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" draggable="true" onDragStart=${() => setDraggingIndex(idx)} onDragOver=${e => e.preventDefault()} onDrop=${e => handleSortDrop(e, idx)} onClick=${() => setPreviewIndex(idx)} style=${{ height: '100px', width: '160px', position: 'relative' }}>
+                                <input type="checkbox" checked=${selectedImageIds.includes(img.id)} onChange=${e => { e.stopPropagation(); setSelectedImageIds(prev => prev.includes(img.id) ? prev.filter(id => id !== img.id) : [...prev, img.id]); }} onClick=${e => e.stopPropagation()} style=${{ position: 'absolute', top: '6px', left: '6px', zIndex: 10, cursor: 'pointer', width: '18px', height: '18px', accentColor: '#e91e63' }} />
+                                <img src="${img.previewUrl}" style=${{ width: '100%', height: '100%', objectFit: 'cover', opacity: selectedImageIds.includes(img.id) ? 0.7 : 1 }} />
                                 <button className="delete-btn" onClick=${e => handleDeleteImage(idx, e)}><${Trash2} size=${16}/></button>
                             </div>
                         `)}
@@ -835,7 +870,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     
                     <div className="filter-group" style=${{ padding: '8px 0', marginBottom: '8px' }}>
                         <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', margin: 0 }}>
-                            <input type="checkbox" checked=${!!formData.is_watchlist} onChange=${e => handleChange('is_watchlist', e.target.checked ? 1 : 0)} style=${{ marginRight: 8 }} />
+                            <input type="checkbox" checked=${!!formData.is_favorite} onChange=${e => handleChange('is_favorite', e.target.checked ? 1 : 0)} style=${{ marginRight: 8 }} />
                             待看關注
                         </label>
                     </div>
@@ -864,25 +899,25 @@ function WorkCard({ work, onClick }) {
         <div className="work-card" onClick=${() => onClick(work.id)}>
             <div className="card-cover">
                 ${coverUrl && !imageError ?
-                    html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
-                    (imageError ?
-                        html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
-                        html`<${Film} size=${48} />`
-                    )
-                }
+            html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
+            (imageError ?
+                html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
+                html`<${Film} size=${48} />`
+            )
+        }
             </div>
             <div className="card-info">
                 <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '4px', marginBottom: '4px', height: '56px', overflow: 'hidden' }}>
-                    <div style=${{ display: 'flex', flexDirection: 'column' }}>
-                        <div className="card-id" style=${{ flexShrink: 0, marginTop: '4px' }}>${work.work_number || '[NO ID]'}</div>
+                    <div style=${{ display: 'flex', flexDirection: 'column', minWidth: 0, flexShrink: 0, maxWidth: '65%' }}>
+                        <div className="card-id" style=${{ flexShrink: 0, marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${work.work_number || ''}>${work.work_number || '[NO ID]'}</div>
                         <div style=${{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                            ${work.has_favorite_actor ? html`<${Star} size=${14} color="#fbc02d" fill="#fbc02d" title="包含關注演員" />` : null}
-                            ${work.is_watchlist ? html`<${Bookmark} size=${14} color="#e91e63" fill="#e91e63" title="待看關注" />` : null}
+                            ${work.fav_actor_count > 0 ? html`<${Star} size=${14} color="#fbc02d" fill="#fbc02d" title="包含關注演員" />` : null}
+                            ${work.is_favorite ? html`<${Bookmark} size=${14} color="#e91e63" fill="#e91e63" title="待看關注" />` : null}
                         </div>
                     </div>
-                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', alignContent: 'flex-start' }}>
+                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', alignContent: 'flex-start', flex: 1, minWidth: 0 }}>
                         ${work.tags && work.tags.map(t => html`
-                            <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? '#fff' : '#333', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', height: '26px' }}>
+                            <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? getContrastYIQ(t.color) : '#333', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', height: '26px' }}>
                                 ${t.name}
                             </span>
                         `)}

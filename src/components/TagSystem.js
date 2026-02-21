@@ -16,6 +16,21 @@ const PRESET_COLORS = [
     '#48DBFB', '#5F27CD', '#FF9FF3', '#576574'
 ];
 
+// 新增: 計算高對比文字顏色 (YIQ公式)
+const getContrastYIQ = (hexcolor) => {
+    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
+    let hex = hexcolor.replace('#', '');
+    if (hex.length === 3) {
+        hex = hex.split('').map(char => char + char).join('');
+    }
+    if (hex.length !== 6) return '#333333';
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? '#000000' : '#ffffff';
+};
+
 // 7. 標籤系統元件 (Tag System)
 
 function TagDeleteModal({ tagId, tagName, onClose, onDeleteSuccess }) {
@@ -61,8 +76,12 @@ function TagSystem() {
     const [editValue, setEditValue] = React.useState("");
     const [draggingItem, setDraggingItem] = React.useState(null);
     const [deletingTag, setDeletingTag] = React.useState(null);
+
+    // 選單控制與位置計算
     const [menuOpenTagId, setMenuOpenTagId] = React.useState(null);
     const [menuOpenGroupId, setMenuOpenGroupId] = React.useState(null);
+    const [menuPos, setMenuPos] = React.useState({ x: 0, y: 0 });
+
     const [dropTarget, setDropTarget] = React.useState(null);
     const [pendingColor, setPendingColor] = React.useState(null);
     const boardRef = React.useRef(null);
@@ -114,16 +133,50 @@ function TagSystem() {
         };
     }, []);
 
+    const handleScroll = () => {
+        // 如果外層捲動，自動關閉選單，避免選單浮在畫面上
+        if (menuOpenGroupId || menuOpenTagId) {
+            setMenuOpenGroupId(null);
+            setMenuOpenTagId(null);
+        }
+    };
+
     const handleOpenGroupMenu = (group, e) => {
         e.stopPropagation();
         if (menuOpenGroupId === group.id) setMenuOpenGroupId(null);
-        else { setMenuOpenGroupId(group.id); setMenuOpenTagId(null); setPendingColor(group.color || null); }
+        else {
+            const rect = e.currentTarget.getBoundingClientRect();
+            let x = rect.left;
+            let y = rect.bottom + 4;
+            // 邊界偵測：若太靠右邊則往左推
+            if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
+            // 邊界偵測：若太靠下方則往上彈出
+            if (y + 250 > window.innerHeight) y = rect.top - 250;
+
+            setMenuPos({ x, y });
+            setMenuOpenGroupId(group.id);
+            setMenuOpenTagId(null);
+            setPendingColor(group.color || null);
+        }
     };
 
     const handleOpenTagMenu = (tag, e) => {
         e.stopPropagation();
         if (menuOpenTagId === tag.id) setMenuOpenTagId(null);
-        else { setMenuOpenTagId(tag.id); setMenuOpenGroupId(null); setPendingColor(tag.color || null); }
+        else {
+            const rect = e.currentTarget.getBoundingClientRect();
+            let x = rect.left;
+            let y = rect.bottom + 4;
+            // 邊界偵測：若太靠右邊則往左推
+            if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
+            // 邊界偵測：若太靠下方則往上彈出
+            if (y + 250 > window.innerHeight) y = rect.top - 250;
+
+            setMenuPos({ x, y });
+            setMenuOpenTagId(tag.id);
+            setMenuOpenGroupId(null);
+            setPendingColor(tag.color || null);
+        }
     };
 
     const handleCreateGroup = (e) => {
@@ -293,91 +346,113 @@ function TagSystem() {
     const inputProps = { className: "quick-input", autoFocus: true, onClick: e => e.stopPropagation(), onDragStart: (e) => e.preventDefault(), onMouseDown: (e) => e.stopPropagation() };
 
     return html`
-        <div className="tag-board" ref=${boardRef} onMouseDown=${handleBoardMouseDown} onContextMenu=${e => e.preventDefault()}>
+        <div className="tag-board" ref=${boardRef} onMouseDown=${handleBoardMouseDown} onScroll=${handleScroll} onContextMenu=${e => e.preventDefault()}>
             ${groups.map(group => {
-                const isGroupEditing = editingTarget?.type === 'group' && editingTarget.id === group.id;
-                const isGroupMenuOpen = menuOpenGroupId === group.id;
-                const groupStyle = group.color ? { backgroundColor: group.color } : {};
-                const menuBtnStyle = group.color ? { backgroundColor: '#fff', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 } : {};
+        const isGroupEditing = editingTarget?.type === 'group' && editingTarget.id === group.id;
+        const isGroupMenuOpen = menuOpenGroupId === group.id;
 
-                return html`
+        // 套用高對比文字顏色 (群組)
+        const groupStyle = group.color ? { backgroundColor: group.color, color: getContrastYIQ(group.color) } : {};
+        const menuBtnStyle = group.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 } : {};
+
+        return html`
                 <div className="tag-group ${draggingItem?.type === 'group' && draggingItem.id === group.id ? 'dragging' : ''}" style=${groupStyle} key=${group.id} draggable=${!isGroupEditing} onDragStart=${e => handleDragStart(e, 'group', group)} onDragEnd=${handleDragEnd} onDragOver=${e => handleDragOver(e, 'group', group.id, null)} onDrop=${e => handleDropGroup(e, group.id)}>
                     <div className="tag-group-header">
                         ${isGroupEditing ?
-                            html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
-                            html`<span style=${{ flex: 1 }} onClick=${() => startEditing('group', group.id, group.name)}>${group.name}</span>`
-                        }
-                        <div style=${{ position: 'relative' }}>
+                html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
+                html`<span style=${{ flex: 1 }} onClick=${() => startEditing('group', group.id, group.name)}>${group.name}</span>`
+            }
+                        <div>
                             <button className="btn-ghost ${isGroupMenuOpen ? 'active' : ''}" style=${menuBtnStyle} onClick=${e => handleOpenGroupMenu(group, e)}>
                                 <${MoreVertical} size=${16} />
                             </button>
                             ${isGroupMenuOpen && html`
-                                <div className="kebab-menu" ref=${groupMenuRef} onClick=${stopPropagation} style=${{ width: 220 }}>
-                                    <div className="tag-menu-section">
-                                        <div style=${{ fontSize: 12, color: '#666', marginBottom: 4 }}>標籤顏色</div>
-                                        <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                                            ${PRESET_COLORS.map(color => html`<div style=${{ width: 20, height: 20, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
-                                            <div style=${{ width: 20, height: 20, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${12}/></div>
-                                        </div>
-                                        <div className="tag-menu-item" style=${{ border: '1px solid #ddd' }} onClick=${() => groupColorInputRef.current.click()}><${Palette} size=${14}/> 自訂顏色<input ref=${groupColorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} /></div>
-                                        <div style=${{ fontSize: 12, color: '#666', marginTop: 4 }}>選定: ${hexToRgb(pendingColor)}</div>
-                                        <div style=${{ display: 'flex', gap: 4, marginTop: 8 }}> <button className="btn-primary" style=${{ flex: 1, padding: '4px 8px', fontSize: 12 }} onClick=${() => saveGroupColor(group.id)}>確定</button> <button className="btn-block" style=${{ flex: 1, padding: '4px 8px', fontSize: 12 }} onClick=${() => setMenuOpenGroupId(null)}>取消</button></div>
+                                <div className="kebab-menu" ref=${groupMenuRef} onClick=${stopPropagation} style=${{ position: 'fixed', top: menuPos.y, left: menuPos.x, zIndex: 9999, width: 240, backgroundColor: '#ffffff', color: '#333333', padding: '12px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'default', whiteSpace: 'normal', textAlign: 'left' }}>
+                                    <div style=${{ fontSize: 13, fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>群組設定</div>
+                                    <div style=${{ fontSize: 12, color: '#666', marginBottom: 6 }}>顏色標記</div>
+                                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                                        ${PRESET_COLORS.map(color => html`<div style=${{ width: 24, height: 24, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
+                                        <div style=${{ width: 24, height: 24, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${14}/></div>
                                     </div>
-                                    <div className="tag-menu-item delete" style=${{ borderTop: '1px solid #ddd', marginTop: 4 }} onClick=${() => handleDeleteGroup(group.id)}><${Trash2} size=${14} /> 刪除組別</div>
+                                    <button className="btn-block" style=${{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '8px', padding: '6px', backgroundColor: '#f8f9fa', border: '1px solid #ddd' }} onClick=${() => groupColorInputRef.current.click()}>
+                                        <${Palette} size=${14}/> 自訂顏色
+                                        <input ref=${groupColorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} />
+                                    </button>
+                                    <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
+                                    
+                                    <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
+                                        <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveGroupColor(group.id)}>套用顏色</button> 
+                                        <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenGroupId(null)}>取消</button>
+                                    </div>
+                                    
+                                    <button className="btn-block" style=${{ width: '100%', backgroundColor: '#dc3545', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', border: 'none' }} onClick=${() => handleDeleteGroup(group.id)}>
+                                        <${Trash2} size=${14} /> 刪除此群組
+                                    </button>
                                 </div>
                             `}
                         </div>
                     </div>
-                    <div className="tag-list" onDragOver=${e => handleListDragOver(e, group.id)} onDrop=${e => handleListDrop(e, group.id)}>
+                    <div className="tag-list" onScroll=${handleScroll} onDragOver=${e => handleListDragOver(e, group.id)} onDrop=${e => handleListDrop(e, group.id)}>
                         ${group.tags.map(tag => {
-                            const isTagEditing = editingTarget?.type === 'tag' && editingTarget.id === tag.id;
-                            const isMenuOpen = menuOpenTagId === tag.id;
-                            const tagStyle = tag.color ? { backgroundColor: tag.color } : {};
-                            const tagMenuBtnStyle = tag.color ? { backgroundColor: '#fff', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : {};
+                const isTagEditing = editingTarget?.type === 'tag' && editingTarget.id === tag.id;
+                const isMenuOpen = menuOpenTagId === tag.id;
 
-                            return html`
+                // 套用高對比文字顏色 (個別標籤)
+                const tagStyle = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color) } : {};
+                const tagMenuBtnStyle = tag.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : {};
+
+                return html`
                             ${dropTarget?.type === 'tag' && dropTarget.id === tag.id && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
                             <div className="tag-item ${draggingItem?.id === tag.id ? 'dragging' : ''}" style=${tagStyle} key=${tag.id} data-id=${tag.id} draggable=${!isTagEditing} onDragStart=${e => handleDragStart(e, 'tag', tag)} onDragEnd=${handleDragEnd} onDragOver=${e => handleDragOver(e, 'tag', tag.id, group.id)} onDrop=${e => handleDropTag(e, tag.id, group.id)}>
                                 ${isTagEditing ?
-                                    html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
-                                    html`<span style=${{ flex: 1 }} onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name}</span>`
-                                }
-                                <div style=${{ position: 'relative' }}>
+                        html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
+                        html`<span style=${{ flex: 1 }} onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name}</span>`
+                    }
+                                <div>
                                     <button className="tag-menu-btn ${isMenuOpen ? 'active' : ''}" style=${tagMenuBtnStyle} onClick=${e => handleOpenTagMenu(tag, e)}><${MoreVertical} size=${14} /></button>
                                     ${isMenuOpen && html`
-                                        <div className="kebab-menu" ref=${menuRef} onClick=${stopPropagation} style=${{ width: 220 }}>
-                                            <div className="tag-menu-section">
-                                                <div style=${{ fontSize: 12, color: '#666', marginBottom: 4 }}>標籤顏色</div>
-                                                <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                                                    ${PRESET_COLORS.map(color => html`<div style=${{ width: 20, height: 20, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
-                                                    <div style=${{ width: 20, height: 20, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${12}/></div>
-                                                </div>
-                                                <div className="tag-menu-item" style=${{ border: '1px solid #ddd' }} onClick=${() => colorInputRef.current.click()}><${Palette} size=${14}/> 自訂顏色<input ref=${colorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} /></div>
-                                                <div style=${{ fontSize: 12, color: '#666', marginTop: 4 }}>選定: ${hexToRgb(pendingColor)}</div>
-                                                <div style=${{ display: 'flex', gap: 4, marginTop: 8 }}> <button className="btn-primary" style=${{ flex: 1, padding: '4px 8px', fontSize: 12 }} onClick=${() => saveTagColor(tag.id)}>確定</button> <button className="btn-block" style=${{ flex: 1, padding: '4px 8px', fontSize: 12 }} onClick=${() => setMenuOpenTagId(null)}>取消</button></div>
+                                        <div className="kebab-menu" ref=${menuRef} onClick=${stopPropagation} style=${{ position: 'fixed', top: menuPos.y, left: menuPos.x, zIndex: 9999, width: 240, backgroundColor: '#ffffff', color: '#333333', padding: '12px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'default', whiteSpace: 'normal', textAlign: 'left' }}>
+                                            <div style=${{ fontSize: 13, fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>標籤設定</div>
+                                            <div style=${{ fontSize: 12, color: '#666', marginBottom: 6 }}>顏色標記</div>
+                                            <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                                                ${PRESET_COLORS.map(color => html`<div style=${{ width: 24, height: 24, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
+                                                <div style=${{ width: 24, height: 24, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${14}/></div>
                                             </div>
-                                            <div className="tag-menu-item delete" style=${{ borderTop: '1px solid #ddd', marginTop: 4 }} onClick=${() => handleDeleteTag(tag)}><${Trash2} size=${14} /> 刪除標籤</div>
+                                            <button className="btn-block" style=${{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '8px', padding: '6px', backgroundColor: '#f8f9fa', border: '1px solid #ddd' }} onClick=${() => colorInputRef.current.click()}>
+                                                <${Palette} size=${14}/> 自訂顏色
+                                                <input ref=${colorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} />
+                                            </button>
+                                            <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
+                                            
+                                            <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
+                                                <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveTagColor(tag.id)}>套用顏色</button> 
+                                                <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenTagId(null)}>取消</button>
+                                            </div>
+                                            
+                                            <button className="btn-block" style=${{ width: '100%', backgroundColor: '#dc3545', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', border: 'none' }} onClick=${() => handleDeleteTag(tag)}>
+                                                <${Trash2} size=${14} /> 刪除此標籤
+                                            </button>
                                         </div>
                                     `}
                                 </div>
                             </div>`;
-                        })}
+            })}
                         ${dropTarget?.id === -1 && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
                     </div>
                     <div className="add-btn-area">
                         ${addingTagGroupId === group.id ?
-                            html`<input ref=${addTagInputRef} {...inputProps} placeholder="輸入標籤..." onKeyDown=${e => handleCreateTag(e, group.id)} onBlur=${() => setAddingTagGroupId(null)} />` :
-                            html`<button className="btn-block" onClick=${() => setAddingTagGroupId(group.id)}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
-                        }
+                html`<input ref=${addTagInputRef} {...inputProps} placeholder="輸入標籤..." onKeyDown=${e => handleCreateTag(e, group.id)} onBlur=${() => setAddingTagGroupId(null)} />` :
+                html`<button className="btn-block" onClick=${() => setAddingTagGroupId(group.id)} style=${group.color ? { color: getContrastYIQ(group.color) } : {}}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
+            }
                     </div>
                 </div>`;
-            })}
+    })}
             <div style=${{ flexShrink: 0 }}>
                 <div className="add-group-btn" onClick=${() => setIsAddingGroup(true)}>
                     ${isAddingGroup ?
-                        html`<input ref=${addGroupInputRef} {...inputProps} placeholder="輸入組別名稱..." onKeyDown=${handleCreateGroup} onBlur=${() => setIsAddingGroup(false)} />` :
-                        html`<div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'default' }} onMouseDown=${(e) => e.preventDefault()}><${Plus} size=${20} /> 新增組別</div>`
-                    }
+            html`<input ref=${addGroupInputRef} {...inputProps} placeholder="輸入組別名稱..." onKeyDown=${handleCreateGroup} onBlur=${() => setIsAddingGroup(false)} />` :
+            html`<div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'default' }} onMouseDown=${(e) => e.preventDefault()}><${Plus} size=${20} /> 新增組別</div>`
+        }
                 </div>
             </div>
             ${deletingTag && html`<${TagDeleteModal} tagId=${deletingTag.id} tagName=${deletingTag.name} onClose=${() => setDeletingTag(null)} onDeleteSuccess=${loadTags} />`}

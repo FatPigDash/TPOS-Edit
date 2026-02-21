@@ -126,11 +126,11 @@ function App() {
                 const selectFields = `w.*, wi.file_name as cover_image, (SELECT COUNT(*) FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1) as fav_actor_count`;
                 // 使用動態 orderByClause
                 const rows = db.prepare(`SELECT ${selectFields} FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
-                
+
                 rows.forEach(row => {
                     try {
                         row.tags = db.prepare(`SELECT t.name, t.color FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
-                    } catch(e) { row.tags = []; }
+                    } catch (e) { row.tags = []; }
                 });
 
                 setWorks(rows);
@@ -183,7 +183,7 @@ function App() {
                         }
                     });
                 })();
-                
+
                 alert(`處理完成！\n已更新 ${updatedCount} 筆作品的名稱格式。`);
                 loadWorks(); // 重新載入列表以顯示變更
 
@@ -233,9 +233,9 @@ function App() {
 
     const handleActorQuickSearch = (actor) => {
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
-        const newFilters = { 
-            name: "", code: "", director: "", maker: "", publisher: "", rating: "", 
-            actor: actorFilter, tags: [], hasFavActor: false, isWatchLater: false 
+        const newFilters = {
+            name: "", code: "", director: "", maker: "", publisher: "", rating: "",
+            actor: actorFilter, tags: [], hasFavActor: false, isWatchLater: false
         };
         setUiFilters(newFilters);
         setAppliedFilters(newFilters);
@@ -257,41 +257,42 @@ function App() {
             </div>
             <div style=${{ flex: 1, overflow: 'hidden' }}>
                 ${activeTab === 'works' ? (
-                    viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => setViewMode('list')} onSaveSuccess=${() => { setViewMode('list'); loadWorks(); }} />` :
-                        viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} 
+            viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => setViewMode('list')} onSaveSuccess=${() => { setViewMode('list'); loadWorks(); }} />` :
+                viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} 
                             uiFilters=${uiFilters} 
                             setUiFilters=${setUiFilters} 
                             onApply=${() => { setAppliedFilters({ ...uiFilters }); setViewMode('list'); }} 
                             onClear=${handleClearFilter}
                             onBack=${() => { setViewMode('list'); setSelectedWorkId(null); }} 
                             onEdit=${(id) => { setSelectedWorkId(id); setViewMode('edit'); }} />` :
-                            html`<div className="main-layout">
+                    html`<div className="main-layout">
                         ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />`}
                         <div className="content-area">
-                            <div className="content-header" style=${{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                                <div style=${{ display: 'flex', alignItems: 'center', flex: 1, minWidth: '300px' }}>
-                                    <button className="btn-ghost" onClick=${() => setIsSidebarOpen(!isSidebarOpen)} title=${isSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px' }}>
+                            <div className="content-header" style=${{ alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', height: 'auto', minHeight: '60px', padding: '16px 20px' }}>
+                                <div style=${{ display: 'flex', alignItems: 'flex-start', flex: 1, minWidth: '300px' }}>
+                                    <button className="btn-ghost" onClick=${() => setIsSidebarOpen(!isSidebarOpen)} title=${isSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '12px', marginTop: '2px' }}>
                                         <${PanelLeft} size=${20} />
                                     </button>
                                     <div style=${{ flex: 1 }}>
-                                        <div className="result-info">搜尋結果: 共${totalItems} 筆</div>
-                                        <div style=${{ fontSize: '14px', color: '#666', marginTop: '4px', lineHeight: '1.5' }}>
-                                            ${getSearchConditions().length === 0 && '尚未搜尋'}
-                                            ${getSearchConditions().map(cond => html`<span key=${cond} style=${{ marginRight: '8px' }}>${cond}</span>`)}
+                                        <div className="result-info" style=${{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>搜尋結果: 共${totalItems} 筆</div>
+                                        <div style=${{ fontSize: '14px', color: '#666', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            ${getSearchConditions().length === 0 ? html`<div style=${{ color: '#999', fontStyle: 'italic' }}>尚未搜尋</div>` : getSearchConditions().map(cond => html`<div key=${cond} style=${{ display: 'inline-block', backgroundColor: '#e3f2fd', color: '#0d47a1', padding: '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: '1px solid #bbdefb' }}>${cond}</div>`)}
                                         </div>
                                     </div>
                                 </div>
-                                <div style=${{ display: 'flex', alignItems: 'center' }}>
-                                    <${ArrowUpDown} size=${16} color="#666" style=${{ marginRight: '8px' }} />
-                                    <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)}>
-                                        <option value="created_desc">新增時間 (新 → 舊)</option>
-                                        <option value="code_asc">識別碼 (A → Z)</option>
-                                        <option value="name_asc">作品名稱 (A → Z)</option>
-                                        <option value="rating_desc">評分 (高 → 低)</option>
-                                    </select>
-                                    <button className="btn-ghost" onClick=${handleBatchMoveId} title="將識別碼從名稱開頭移至尾端" style=${{ border: '1px solid #ccc', borderRadius: '4px' }}>
-                                        <${FileText} size=${16} />
-                                    </button>
+                                <div style=${{ display: 'flex', alignItems: 'flex-start' }}>
+                                    <div style=${{ display: 'flex', alignItems: 'center', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '6px' }}>
+                                        <${ArrowUpDown} size=${16} color="#666" style=${{ margin: '0 8px' }} />
+                                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px', border: 'none', backgroundColor: 'transparent', fontWeight: 'bold' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)}>
+                                            <option value="created_desc">新增時間 (新 → 舊)</option>
+                                            <option value="code_asc">識別碼 (A → Z)</option>
+                                            <option value="name_asc">作品名稱 (A → Z)</option>
+                                            <option value="rating_desc">評分 (高 → 低)</option>
+                                        </select>
+                                        <button className="btn-ghost" onClick=${handleBatchMoveId} title="將識別碼從名稱開頭移至尾端" style=${{ padding: '6px 10px', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #ddd' }}>
+                                            <${FileText} size=${16} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             <div className="card-grid">
@@ -302,7 +303,7 @@ function App() {
                             </div>
                         </div>
                     </div>`
-                ) : activeTab === 'tags' ? html`<${TagSystem} />` : html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />`}
+        ) : activeTab === 'tags' ? html`<${TagSystem} />` : html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />`}
             </div>
         </div>`;
 }
