@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { webUtils, ipcRenderer } = require('electron');
 const {
-    Search, ChevronDown, ChevronRight: ChevronRightIcon, X,
+    Search, ChevronDown, ChevronRight: ChevronRightIcon, ChevronLeft: ChevronLeftIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
     Save, Plus, Trash2, Download, PanelLeft, Bookmark
 } = require('lucide-react');
@@ -19,19 +19,19 @@ const {
 } = require('./Shared');
 const { ScraperModal } = require('./Scraper');
 
-// 新增: 計算高對比文字顏色 (YIQ公式)
-const getContrastYIQ = (hexcolor) => {
-    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
-    let hex = hexcolor.replace('#', '');
-    if (hex.length === 3) {
-        hex = hex.split('').map(char => char + char).join('');
+// 自動資料庫結構升級: 確保 works 表有 notes 欄位
+let migrationDone = false;
+const ensureNotesColumn = () => {
+    if (!db || migrationDone) return;
+    try {
+        const columns = db.prepare('PRAGMA table_info(works)').all();
+        if (!columns.some(c => c.name === 'notes')) {
+            db.prepare('ALTER TABLE works ADD COLUMN notes TEXT DEFAULT ""').run();
+        }
+        migrationDone = true;
+    } catch (e) {
+        console.error("Migration error:", e);
     }
-    if (hex.length !== 6) return '#333333';
-    const r = parseInt(hex.substr(0, 2), 16);
-    const g = parseInt(hex.substr(2, 2), 16);
-    const b = parseInt(hex.substr(4, 2), 16);
-    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-    return (yiq >= 128) ? '#000000' : '#ffffff';
 };
 
 // 5. 篩選與選擇元件 (Filter & Selector)
@@ -60,11 +60,11 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
         <div className="tag-filter-sidebar" style=${{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
             <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選 (AND)</div>
             ${groups.map(group => {
-        const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
-        const isExpanded = expandedGroups[group.id];
-        const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
-
-        return html`
+                const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
+                const isExpanded = expandedGroups[group.id];
+                const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
+                
+                return html`
                 <div key=${group.id} style=${{ marginBottom: '4px' }}>
                     <div onClick=${() => toggleGroup(group.id)} style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', backgroundColor: '#f9f9f9', borderRadius: '4px', fontSize: '14px', ...groupStyle }}>
                         ${isExpanded ? html`<${ChevronDown} size=${14} />` : html`<${ChevronRightIcon} size=${14} />`}
@@ -83,14 +83,14 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
                         </div>
                     `}
                 </div>`;
-    })}
+            })}
         </div>`;
 }
 
 function ActorFilter({ value, onChange }) {
     const [suggestions, setSuggestions] = React.useState([]);
     const [showSuggestions, setShowSuggestions] = React.useState(false);
-
+    
     const currentMode = value?.mode || 'OR';
     const currentItems = value?.items || [];
     const inputValue = value?.inputValue || "";
@@ -270,7 +270,7 @@ function ActorSelector({ selectedActors, onChange, inputValue, onInputChange }) 
         const trimmedName = inputValue.trim();
         const existing = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(trimmedName);
         if (existing) return alert('已存在相同名稱的演員');
-
+        
         const actorId = getOrCreateActorId(db, trimmedName);
         if (actorId) {
             const actorNumber = db.prepare('SELECT actor_number FROM actors WHERE id = ?').get(actorId).actor_number;
@@ -318,6 +318,21 @@ function ActorSelector({ selectedActors, onChange, inputValue, onInputChange }) 
         </div>`;
 }
 
+// 計算高對比文字顏色 (YIQ公式)
+const getContrastYIQ = (hexcolor) => {
+    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
+    let hex = hexcolor.replace('#', '');
+    if (hex.length === 3) {
+        hex = hex.split('').map(char => char + char).join('');
+    }
+    if (hex.length !== 6) return '#333333';
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? '#000000' : '#ffffff';
+};
+
 function TagSelector({ selectedTags, onChange }) {
     const [groups, setGroups] = React.useState([]);
 
@@ -342,22 +357,22 @@ function TagSelector({ selectedTags, onChange }) {
                     <div className="group-title">${group.name}</div>
                     <div className="tag-chips">
                         ${group.tags.map(tag => {
-        const isSelected = selectedTags.some(t => t.id === tag.id);
-        // 這裡套用 getContrastYIQ 來確保選取後的文字也維持高對比
-        const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
-        if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
-        return html`
+                            const isSelected = selectedTags.some(t => t.id === tag.id);
+                            const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
+                            if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
+                            return html`
                                 <div className="tag-chip ${isSelected ? 'selected' : ''}" style=${style} onClick=${() => toggleTag(tag)}>
                                     ${tag.name}
                                     ${isSelected && html`<${Check} size=${12} style=${{ marginLeft: 4 }} />`}
                                 </div>`;
-    })}
+                        })}
                         ${group.tags.length === 0 && html`<span style=${{ color: '#ccc', fontSize: 12 }}>無標籤</span>`}
                     </div>
                 </div>
             `)}
         </div>`;
 }
+
 // 8. 作品系統元件 (Work System)
 
 function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply, onClear }) {
@@ -371,18 +386,19 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
     const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
 
     React.useEffect(() => {
+        ensureNotesColumn(); // 確保資料庫有 notes 欄位
         if (!db) return;
         try {
             setWork(db.prepare('SELECT * FROM works WHERE id=?').get(workId));
-
+            
             const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(workId).map(row => ({
                 id: row.id,
                 url: getFileUrl(path.join(worksImgDir, row.file_name)),
                 isCover: row.is_cover === 1
             }));
-
+            
             setImages(loadedImages);
-
+            
             const coverIndex = loadedImages.findIndex(img => img.isCover);
             if (coverIndex !== -1) {
                 setPreviewIndex(coverIndex);
@@ -395,11 +411,23 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
         } catch (err) { console.error(err); }
     }, [workId]);
 
-    const handleMiddleClickActor = (e, actor) => {
-        if (e.button === 1) {
-            e.preventDefault();
-            if (!actor.actor_id) return;
+    const handlePrevImage = (e) => {
+        stopPropagation(e);
+        if (images.length <= 1) return;
+        setPreviewIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+    };
 
+    const handleNextImage = (e) => {
+        stopPropagation(e);
+        if (images.length <= 1) return;
+        setPreviewIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+    };
+
+    const handleMiddleClickActor = (e, actor) => {
+        if (e.button === 1) { 
+            e.preventDefault();
+            if (!actor.actor_id) return; 
+            
             const currentActors = uiFilters.actor?.items || [];
             if (!currentActors.find(a => a.id === actor.actor_id)) {
                 setUiFilters({
@@ -415,7 +443,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
     };
 
     const handleMiddleClickTag = (e, tagId) => {
-        if (e.button === 1) {
+        if (e.button === 1) { 
             e.preventDefault();
             const currentTags = uiFilters.tags || [];
             if (!currentTags.includes(tagId)) {
@@ -448,8 +476,18 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                     </button>
                     <h3 style=${{ margin: 0 }}>作品預覽</h3>
                 </div>
-                <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px' }}>
-                    ${images[previewIndex] ? html`<img src="${images[previewIndex].url}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', cursor: 'zoom-in' }} onClick=${() => setViewingImage(images[previewIndex].url)} />` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
+                <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    ${images[previewIndex] ? html`
+                        <img src="${images[previewIndex].url}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', cursor: 'zoom-in' }} onClick=${() => setViewingImage(images[previewIndex].url)} />
+                        ${images.length > 1 && html`
+                            <div className="preview-nav-btn prev" onClick=${handlePrevImage} style=${{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
+                                <${ChevronLeftIcon} size=${24} />
+                            </div>
+                            <div className="preview-nav-btn next" onClick=${handleNextImage} style=${{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
+                                <${ChevronRightIcon} size=${24} />
+                            </div>
+                        `}
+                    ` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
                 </div>
                 <div className="thumbnail-list" style=${{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                     ${images.map((img, idx) => html`<div className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" style=${{ width: 160, height: 100, flexShrink: 0 }} onClick=${() => setPreviewIndex(idx)}><img src="${img.url}" /></div>`)}
@@ -480,15 +518,28 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <label className="filter-label">演員</label>
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
-        const isRealActor = !!actor.actor_id;
-        return html`<span 
-                                    style=${{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e3f2fd', color: isRealActor ? '#2196F3' : '#333', cursor: isRealActor ? 'pointer' : 'default', textDecoration: isRealActor ? 'underline' : 'none', fontWeight: isRealActor ? 'bold' : 'normal' }} 
+                                const isRealActor = !!actor.actor_id;
+                                const isMissingImage = isRealActor && !actor.image_path;
+
+                                return html`<span 
+                                    style=${{ 
+                                        padding: '4px 8px', 
+                                        borderRadius: '4px', 
+                                        backgroundColor: isMissingImage ? '#fff3cd' : '#e3f2fd', 
+                                        color: isMissingImage ? '#856404' : (isRealActor ? '#2196F3' : '#333'), 
+                                        cursor: isRealActor ? 'pointer' : 'default', 
+                                        textDecoration: isRealActor ? 'underline' : 'none', 
+                                        fontWeight: isRealActor ? 'bold' : 'normal',
+                                        display: 'inline-flex',
+                                        alignItems: 'center'
+                                    }} 
                                     onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
-                                    title=${isRealActor ? `${actor.actor_number} (中鍵點擊加入篩選)` : '純文字標籤'}>
+                                    title=${isRealActor ? `${actor.actor_number} ${isMissingImage ? '(無圖片) ' : ''}(中鍵點擊加入篩選)` : '純文字標籤'}>
+                                    ${isMissingImage && html`<span style=${{ color: '#dc3545', fontWeight: 'bold', marginRight: '4px', textDecoration: 'none' }}>!</span>`}
                                     ${actor.name}
                                 </span>`;
-    })}
+                            })}
                             ${linkedActors.length === 0 && html`<span style=${{ color: '#999' }}>無關聯演員</span>`}
                         </div>
                     </div>
@@ -517,6 +568,13 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                             ${groups.length == 0 && html`<span style=${{ color: '#999' }}>無標籤</span>`}
                         </div>
                     </div>
+
+                    <div className="filter-group">
+                        <label className="filter-label">註解</label>
+                        <div style=${{ padding: '8px 0', borderBottom: '1px solid #eee', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: '1.6' }}>
+                            ${work.notes || html`<span style=${{ color: '#999' }}>無</span>`}
+                        </div>
+                    </div>
                 </div>
             </div>
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
@@ -526,10 +584,10 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
 
 function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const isEditMode = !!initialWorkId;
-    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 });
+    const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0, notes: '' });
     const [images, setImages] = React.useState([]);
     const [deletedImageIds, setDeletedImageIds] = React.useState([]);
-    const [selectedImageIds, setSelectedImageIds] = React.useState([]);
+    const [selectedImageIds, setSelectedImageIds] = React.useState([]); 
     const [previewIndex, setPreviewIndex] = React.useState(0);
     const [dragOver, setDragOver] = React.useState(false);
     const [draggingIndex, setDraggingIndex] = React.useState(null);
@@ -542,11 +600,12 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [isScraperOpen, setIsScraperOpen] = React.useState(false);
 
     React.useEffect(() => {
+        ensureNotesColumn(); // 確保資料庫有 notes 欄位
         if (!db) return;
         if (isEditMode) {
             try {
                 const work = db.prepare('SELECT * FROM works WHERE id=?').get(initialWorkId);
-                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 });
+                if (work) setFormData({ ...work, rating: work.rating != null ? String(work.rating) : '', is_favorite: work.is_favorite || 0, notes: work.notes || '' });
 
                 const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(initialWorkId).map(row => ({
                     id: Date.now() + Math.random(),
@@ -564,12 +623,24 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 const linkedT = db.prepare('SELECT t.id, t.name, t.color, t.group_id FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id WHERE wtl.work_id = ?').all(initialWorkId);
                 setSelectedTags(linkedT);
 
-                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_favorite: work.is_favorite || 0 }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
+                setInitialState({ formData: { ...work, rating: work.rating !== null ? String(work.rating) : '', is_favorite: work.is_favorite || 0, notes: work.notes || '' }, images: JSON.stringify(loadedImages.map(i => i.dbId || i.filePath)), actors: JSON.stringify(linkedA), tags: JSON.stringify(linkedT) });
             } catch (err) { }
         } else {
-            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0 }, images: '[]', actors: '[]', tags: '[]' });
+            setInitialState({ formData: { work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0, notes: '' }, images: '[]', actors: '[]', tags: '[]' });
         }
     }, [initialWorkId]);
+
+    const handlePrevImage = (e) => {
+        stopPropagation(e);
+        if (images.length <= 1) return;
+        setPreviewIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
+    };
+
+    const handleNextImage = (e) => {
+        stopPropagation(e);
+        if (images.length <= 1) return;
+        setPreviewIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
+    };
 
     const handleChange = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -577,7 +648,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         const files = Array.from(fileList);
         const newImages = [];
         let hasUnsupported = false;
-
+        
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             let realPath = file.path;
@@ -586,7 +657,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
             const ext = path.extname(realPath).toLowerCase();
             const isVideo = file.type.startsWith('video/') || ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'].includes(ext);
-
+            
             if (isVideo) {
                 setIsLoading(true);
                 try {
@@ -594,7 +665,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     setFormData(prev => ({
                         ...prev,
                         resolution: metadata.resolution,
-                        file_size: metadata.duration
+                        file_size: metadata.duration 
                     }));
                 } catch (err) {
                     console.error("Video metadata error:", err);
@@ -613,27 +684,27 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 hasUnsupported = true;
             }
         }
-
+        
         if (hasUnsupported) {
             alert('上傳失敗：圖片格式不支援');
         }
-
+        
         if (newImages.length > 0) setImages(prev => [...prev, ...newImages]);
     };
 
     const handleDropUpload = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); if (e.dataTransfer.files.length > 0) processNewFiles(e.dataTransfer.files); };
     const handleSortDrop = (e, targetIndex) => {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); 
+        e.stopPropagation(); 
         if (draggingIndex === null || draggingIndex === targetIndex) return;
         setImages(prev => { const newList = [...prev]; const [moved] = newList.splice(draggingIndex, 1); newList.splice(targetIndex, 0, moved); return newList; });
         setDraggingIndex(null);
     };
 
     const handleDeleteImage = (index, e) => {
-        e.stopPropagation();
+        e.stopPropagation(); 
         if (!confirm('移除此圖片?')) return;
-        const img = images[index];
+        const img = images[index]; 
         if (img.isStored) setDeletedImageIds(p => [...p, img.dbId]);
         setImages(p => p.filter((_, i) => i !== index));
         setSelectedImageIds(p => p.filter(id => id !== img.id));
@@ -646,11 +717,11 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
         const imagesToDelete = images.filter(img => selectedImageIds.includes(img.id));
         const storedIdsToDelete = imagesToDelete.filter(img => img.isStored).map(img => img.dbId);
-
+        
         if (storedIdsToDelete.length > 0) {
             setDeletedImageIds(p => [...p, ...storedIdsToDelete]);
         }
-
+        
         setImages(p => p.filter(img => !selectedImageIds.includes(img.id)));
         setSelectedImageIds([]);
         setPreviewIndex(0);
@@ -676,30 +747,26 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
         if (newData.actors && Array.isArray(newData.actors)) {
             let currentSelectedActors = [...selectedActors];
-            const timestamp = Date.now();
             try {
                 db.transaction(() => {
                     newData.actors.forEach(actorName => {
                         const trimmedName = actorName.trim();
                         if (!trimmedName) return;
-                        if (currentSelectedActors.some(a => a.name === trimmedName)) return;
-
-                        let actor = db.prepare('SELECT id, actor_number FROM actors WHERE name = ? AND is_deleted = 0').get(trimmedName);
-                        let info;
-                        let newNumber;
-
-                        if (!actor) {
-                            newNumber = getNewActorNumber(db);
-                            info = db.prepare('INSERT INTO actors (actor_number, name, created_at, is_favorite) VALUES (?, ?, ?, 0)').run(newNumber, trimmedName, timestamp);
-                            actor = { id: info.lastInsertRowid, actor_number: newNumber };
+                        
+                        const actorId = getOrCreateActorId(db, trimmedName);
+                        if (actorId) {
+                            const actorInfo = db.prepare('SELECT id, name, actor_number FROM actors WHERE id = ?').get(actorId);
+                            if (actorInfo) {
+                                if (!currentSelectedActors.some(a => a.id === actorInfo.id)) {
+                                    currentSelectedActors.push({
+                                        id: actorInfo.id,
+                                        name: actorInfo.name, 
+                                        actor_number: actorInfo.actor_number,
+                                        isTextOnly: false
+                                    });
+                                }
+                            }
                         }
-
-                        currentSelectedActors.push({
-                            id: actor.id,
-                            name: trimmedName,
-                            actor_number: actor.actor_number,
-                            isTextOnly: false
-                        });
                     });
                 })();
                 setTimeout(() => {
@@ -728,9 +795,9 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     const saveData = { ...formData, rating: ratingVal };
 
                     if (isEditMode) {
-                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_favorite=@is_favorite WHERE id=@id`).run({ ...saveData, id: workId });
+                        db.prepare(`UPDATE works SET work_number=@work_number, name=@name, release_date=@release_date, resolution=@resolution, duration=@duration, file_size=@file_size, director=@director, maker=@maker, publisher=@publisher, rating=@rating, is_favorite=@is_favorite, notes=@notes WHERE id=@id`).run({ ...saveData, id: workId });
                     } else {
-                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, is_favorite, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @is_favorite, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
+                        workId = db.prepare(`INSERT INTO works (work_number, name, release_date, resolution, duration, file_size, director, maker, publisher, rating, is_favorite, notes, created_at) VALUES (@work_number, @name, @release_date, @resolution, @duration, @file_size, @director, @maker, @publisher, @rating, @is_favorite, @notes, @created_at)`).run({ ...saveData, created_at: Date.now() }).lastInsertRowid;
                     }
 
                     if (deletedImageIds.length > 0) {
@@ -756,7 +823,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                             const timestamp = Date.now();
                             const randomSuffix = Math.floor(Math.random() * 10000);
                             const newName = `works_${formData.work_number}_${timestamp}_${randomSuffix}${ext}`;
-
+                            
                             fs.copyFileSync(img.filePath, path.join(worksImgDir, newName));
                             insertImg.run(workId, newName, idx + 1, isCover);
                         }
@@ -816,8 +883,18 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                             </button>
                         `}
                     </div>
-                    <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' }}>
-                        ${images[previewIndex] ? html`<img src="${images[previewIndex].previewUrl}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
+                    <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', position: 'relative' }}>
+                        ${images[previewIndex] ? html`
+                            <img src="${images[previewIndex].previewUrl}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                            ${images.length > 1 && html`
+                                <div className="preview-nav-btn prev" onClick=${handlePrevImage} style=${{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
+                                    <${ChevronLeftIcon} size=${24} />
+                                </div>
+                                <div className="preview-nav-btn next" onClick=${handleNextImage} style=${{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
+                                    <${ChevronRightIcon} size=${24} />
+                                </div>
+                            `}
+                        ` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
                     </div>
                     <div className="thumbnail-list" style=${{ flex: 1, minHeight: '120px', gridTemplateColumns: 'repeat(auto-fill, 160px)', overflowY: 'auto' }}>
                         ${images.map((img, idx) => html`
@@ -879,6 +956,18 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         <${TagSelector} selectedTags=${selectedTags} onChange=${setSelectedTags} />
                     </div>
 
+                    <div className="filter-group" style=${{ borderTop: '1px solid #eee', paddingTop: 20 }}>
+                        <label className="filter-label">註解</label>
+                        <textarea 
+                            className="filter-input" 
+                            style=${{ minHeight: '120px', resize: 'vertical', width: '100%', lineHeight: '1.5', fontFamily: 'inherit' }} 
+                            value=${formData.notes || ''} 
+                            onInput=${e => handleChange('notes', e.target.value)} 
+                            onMouseDown=${stopProp}
+                            placeholder="請輸入註解..." 
+                        />
+                    </div>
+
                     ${isEditMode && html`
                         <div style=${{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
                             <button className="btn-block" onClick=${handleDeleteWork} style=${{ color: '#dc3545', fontWeight: 'bold' }}><${Trash2} size=${16} style=${{ marginRight: 6 }}/> 永久刪除此作品</button>
@@ -899,12 +988,12 @@ function WorkCard({ work, onClick }) {
         <div className="work-card" onClick=${() => onClick(work.id)}>
             <div className="card-cover">
                 ${coverUrl && !imageError ?
-            html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
-            (imageError ?
-                html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
-                html`<${Film} size=${48} />`
-            )
-        }
+                    html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
+                    (imageError ?
+                        html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
+                        html`<${Film} size=${48} />`
+                    )
+                }
             </div>
             <div className="card-info">
                 <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '4px', marginBottom: '4px', height: '56px', overflow: 'hidden' }}>
