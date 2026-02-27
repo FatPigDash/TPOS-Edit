@@ -343,7 +343,8 @@ function TagSystem() {
         }
     };
 
-    const inputProps = { className: "quick-input", autoFocus: true, onClick: e => e.stopPropagation(), onDragStart: (e) => e.preventDefault(), onMouseDown: (e) => e.stopPropagation() };
+    // 修正: 確保 input 輸入時文字為深色，不被外層顏色繼承污染
+    const inputProps = { className: "quick-input", autoFocus: true, style: { color: '#333333' }, onClick: e => e.stopPropagation(), onDragStart: (e) => e.preventDefault(), onMouseDown: (e) => e.stopPropagation() };
 
     return html`
         <div className="tag-board" ref=${boardRef} onMouseDown=${handleBoardMouseDown} onScroll=${handleScroll} onContextMenu=${e => e.preventDefault()}>
@@ -397,9 +398,9 @@ function TagSystem() {
                 const isTagEditing = editingTarget?.type === 'tag' && editingTarget.id === tag.id;
                 const isMenuOpen = menuOpenTagId === tag.id;
 
-                // 套用高對比文字顏色 (個別標籤)
-                const tagStyle = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color) } : {};
-                const tagMenuBtnStyle = tag.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : {};
+                // 修正: 如果沒有設定顏色，強制使用深灰色阻斷群組顏色的繼承
+                const tagStyle = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color) } : { color: '#333333' };
+                const tagMenuBtnStyle = tag.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : { color: '#333333' };
 
                 return html`
                             ${dropTarget?.type === 'tag' && dropTarget.id === tag.id && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
@@ -442,7 +443,8 @@ function TagSystem() {
                     <div className="add-btn-area">
                         ${addingTagGroupId === group.id ?
                 html`<input ref=${addTagInputRef} {...inputProps} placeholder="輸入標籤..." onKeyDown=${e => handleCreateTag(e, group.id)} onBlur=${() => setAddingTagGroupId(null)} />` :
-                html`<button className="btn-block" onClick=${() => setAddingTagGroupId(group.id)} style=${group.color ? { color: getContrastYIQ(group.color) } : {}}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
+                // 修正: 將新增標籤按鈕設定為透明背景，並以組別的高對比色作為文字與邊框，避免白底白字
+                html`<button className="btn-block" onClick=${() => setAddingTagGroupId(group.id)} style=${group.color ? { backgroundColor: 'transparent', color: getContrastYIQ(group.color), borderColor: getContrastYIQ(group.color) } : { color: '#333333' }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
             }
                     </div>
                 </div>`;

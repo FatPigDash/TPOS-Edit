@@ -11,7 +11,7 @@ const {
 } = require('lucide-react');
 
 const { db } = require('./utils/db');
-const { parseSearchQuery } = require('./utils/helpers');
+const { parseSearchQuery, parseCodeSearchQuery } = require('./utils/helpers');
 const {
     ErrorBoundary, LoadingOverlay, Pagination
 } = require('./components/Shared');
@@ -37,8 +37,8 @@ function App() {
     const [sortOrder, setSortOrder] = React.useState('created_desc');
 
     // V2.2.x: 新增 hasFavActor 與 isWatchLater 狀態
-    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
-    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
+    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
+    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
     const [currentPage, setCurrentPage] = React.useState(1);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
@@ -57,11 +57,11 @@ function App() {
 
                 // 修正: 將 \s+ 改為 \s*, 允許開頭無空白, 解決 "WHERE AND (...)" 的語法錯誤
                 if (appliedFilters.name) { const q = parseSearchQuery(appliedFilters.name, 'w.name'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.code) { const q = parseSearchQuery(appliedFilters.code, 'w.work_number'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
+                if (appliedFilters.code) { const q = parseCodeSearchQuery(appliedFilters.code, 'w.work_number'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
                 if (appliedFilters.director) { const q = parseSearchQuery(appliedFilters.director, 'w.director'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
                 if (appliedFilters.maker) { const q = parseSearchQuery(appliedFilters.maker, 'w.maker'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
                 if (appliedFilters.publisher) { const q = parseSearchQuery(appliedFilters.publisher, 'w.publisher'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.rating && appliedFilters.rating.trim() !== '') { const rVal = parseFloat(appliedFilters.rating); if (!isNaN(rVal)) { whereClauses.push('w.rating >= ?'); params.push(rVal); } }
+                if (appliedFilters.rating && appliedFilters.rating.trim() !== '') { const rVal = parseFloat(appliedFilters.rating); if (!isNaN(rVal)) { const rOp = appliedFilters.ratingMode === 'eq' ? '=' : '>='; whereClauses.push(`w.rating ${rOp} ?`); params.push(rVal); } }
 
                 // 新增: 待看關注篩選
                 if (appliedFilters.isWatchLater) {
@@ -203,7 +203,7 @@ function App() {
         const conds = [];
         if (appliedFilters.name) conds.push(`名稱: ${appliedFilters.name}`);
         if (appliedFilters.code) conds.push(`識別碼: ${appliedFilters.code}`);
-        if (appliedFilters.rating) conds.push(`評分 >= ${appliedFilters.rating}`);
+        if (appliedFilters.rating) conds.push(`評分 ${appliedFilters.ratingMode === 'eq' ? '=' : '>='} ${appliedFilters.rating}`);
         if (appliedFilters.director) conds.push(`導演: ${appliedFilters.director}`);
         if (appliedFilters.maker) conds.push(`製作商: ${appliedFilters.maker}`);
         if (appliedFilters.publisher) conds.push(`發行商: ${appliedFilters.publisher}`);
@@ -226,7 +226,7 @@ function App() {
     };
 
     const handleClearFilter = () => {
-        const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false };
+        const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
     };
@@ -234,7 +234,7 @@ function App() {
     const handleActorQuickSearch = (actor) => {
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
         const newFilters = {
-            name: "", code: "", director: "", maker: "", publisher: "", rating: "",
+            name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte',
             actor: actorFilter, tags: [], hasFavActor: false, isWatchLater: false
         };
         setUiFilters(newFilters);
@@ -247,7 +247,7 @@ function App() {
         <${LoadingOverlay} show=${isLoading} />
         <div style=${{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
             <div className="navbar">
-                <div className="nav-title">The Pile of Shame (V2.4.1)</div>
+                <div className="nav-title">The Pile of Shame (V2.4.2)</div>
                 <div className="nav-tabs">
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>

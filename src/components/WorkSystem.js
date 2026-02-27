@@ -15,7 +15,7 @@ const {
     getFileUrl, parseSearchQuery, stopPropagation, getNewActorNumber, getOrCreateActorId
 } = require('../utils/helpers');
 const {
-    ConfirmModal, ImageViewerModal, SearchHelpText
+    ConfirmModal, ImageViewerModal, SearchHelpText, CodeSearchHelpText
 } = require('./Shared');
 const { ScraperModal } = require('./Scraper');
 
@@ -60,11 +60,11 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
         <div className="tag-filter-sidebar" style=${{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
             <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選 (AND)</div>
             ${groups.map(group => {
-                const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
-                const isExpanded = expandedGroups[group.id];
-                const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
-                
-                return html`
+        const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
+        const isExpanded = expandedGroups[group.id];
+        const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
+
+        return html`
                 <div key=${group.id} style=${{ marginBottom: '4px' }}>
                     <div onClick=${() => toggleGroup(group.id)} style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', backgroundColor: '#f9f9f9', borderRadius: '4px', fontSize: '14px', ...groupStyle }}>
                         ${isExpanded ? html`<${ChevronDown} size=${14} />` : html`<${ChevronRightIcon} size=${14} />`}
@@ -83,14 +83,14 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
                         </div>
                     `}
                 </div>`;
-            })}
+    })}
         </div>`;
 }
 
 function ActorFilter({ value, onChange }) {
     const [suggestions, setSuggestions] = React.useState([]);
     const [showSuggestions, setShowSuggestions] = React.useState(false);
-    
+
     const currentMode = value?.mode || 'OR';
     const currentItems = value?.items || [];
     const inputValue = value?.inputValue || "";
@@ -168,72 +168,99 @@ function ActorFilter({ value, onChange }) {
 
 function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
     const actorFilterValue = typeof uiFilters.actor === 'string' ? { mode: 'OR', items: [], inputValue: "" } : uiFilters.actor;
+    const [showAdvanced, setShowAdvanced] = React.useState(false);
 
     return html`
-        <div className="sidebar">
-            <h3 style=${{ marginTop: 0, marginBottom: '16px' }}>作品篩選</h3>
-            
-            <div className="filter-group">
-                <label className="filter-label">作品名稱</label>
-                <div style=${{ position: 'relative' }}>
-                    <input className="filter-input" style=${{ paddingRight: '30px' }} value=${uiFilters.name} onInput=${e => setUiFilters({ ...uiFilters, name: e.target.value })} placeholder="搜尋名稱..." />
-                    <div style=${{ position: 'absolute', right: 8, top: 10 }}><${Search} size=${16} color="#999" /></div>
+        <div className="sidebar" style=${{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+            <div style=${{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'white', borderBottom: '1px solid #e0e0e0', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <h3 style=${{ margin: 0, flex: 1, fontSize: '15px' }}>作品篩選</h3>
+                <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${onApply}>套用篩選</button>
+                <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${onClear}>清除篩選</button>
+            </div>
+
+            <div style=${{ overflowY: 'auto', padding: '16px', flex: 1 }}>
+                <div className="filter-group">
+                    <label className="filter-label">作品名稱</label>
+                    <div style=${{ position: 'relative' }}>
+                        <input className="filter-input" style=${{ paddingRight: '30px' }} value=${uiFilters.name} onInput=${e => setUiFilters({ ...uiFilters, name: e.target.value })} placeholder="搜尋名稱..." />
+                        <div style=${{ position: 'absolute', right: 8, top: 10 }}><${Search} size=${16} color="#999" /></div>
+                    </div>
+                    <${SearchHelpText} />
                 </div>
-                <${SearchHelpText} />
-            </div>
 
-            <div className="filter-group">
-                <label className="filter-label">識別碼</label>
-                <input className="filter-input" value=${uiFilters.code} onInput=${e => setUiFilters({ ...uiFilters, code: e.target.value })} placeholder="例如: ABC-123" />
-                <${SearchHelpText} />
-            </div>
+                <div className="filter-group">
+                    <label className="filter-label">識別碼</label>
+                    <input className="filter-input" value=${uiFilters.code} onInput=${e => setUiFilters({ ...uiFilters, code: e.target.value })} placeholder="例如: ABC-123" />
+                    <${CodeSearchHelpText} />
+                </div>
 
-            <div className="filter-group">
-                <${ActorFilter} value=${actorFilterValue} onChange=${newValue => setUiFilters({ ...uiFilters, actor: newValue })} />
-            </div>
+                <div className="filter-group">
+                    <${ActorFilter} value=${actorFilterValue} onChange=${newValue => setUiFilters({ ...uiFilters, actor: newValue })} />
+                </div>
 
-            <div className="filter-group">
-                <label className="filter-label">評分 (最高5分, 大於或等於判定)</label>
-                <input type="number" step="0.1" className="filter-input" value=${uiFilters.rating} onInput=${e => setUiFilters({ ...uiFilters, rating: e.target.value })} placeholder="例如: 4.0" />
-            </div>
+                <div className="filter-group">
+                    <div style=${{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+                        <label className="filter-label" style=${{ marginBottom: 0, flex: 1 }}>評分 (最高5分)</label>
+                        <div style=${{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #ddd', fontSize: 12 }}>
+                            <button
+                                onClick=${() => setUiFilters({ ...uiFilters, ratingMode: 'gte' })}
+                                style=${{ padding: '2px 8px', border: 'none', cursor: 'pointer', backgroundColor: (uiFilters.ratingMode !== 'eq') ? '#2196F3' : '#f5f5f5', color: (uiFilters.ratingMode !== 'eq') ? 'white' : '#555', fontWeight: (uiFilters.ratingMode !== 'eq') ? 'bold' : 'normal', transition: 'background 0.15s' }}
+                                title="大於或等於">≥</button>
+                            <button
+                                onClick=${() => setUiFilters({ ...uiFilters, ratingMode: 'eq' })}
+                                style=${{ padding: '2px 8px', border: 'none', borderLeft: '1px solid #ddd', cursor: 'pointer', backgroundColor: (uiFilters.ratingMode === 'eq') ? '#2196F3' : '#f5f5f5', color: (uiFilters.ratingMode === 'eq') ? 'white' : '#555', fontWeight: (uiFilters.ratingMode === 'eq') ? 'bold' : 'normal', transition: 'background 0.15s' }}
+                                title="等於">=</button>
+                        </div>
+                    </div>
+                    <input type="number" step="0.1" className="filter-input" value=${uiFilters.rating} onInput=${e => setUiFilters({ ...uiFilters, rating: e.target.value })} placeholder="例如: 4.0" />
+                </div>
 
-            <div className="filter-group">
-                <label className="filter-label">導演</label>
-                <input className="filter-input" value=${uiFilters.director} onInput=${e => setUiFilters({ ...uiFilters, director: e.target.value })} placeholder="搜尋導演..." />
-                <${SearchHelpText} />
-            </div>
+                <div className="filter-group" style=${{ padding: 0 }}>
+                    <div
+                        onClick=${() => setShowAdvanced(v => !v)}
+                        style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px 0', userSelect: 'none', color: '#555' }}>
+                        ${showAdvanced ? html`<${ChevronDown} size=${15} />` : html`<${ChevronRightIcon} size=${15} />`}
+                        <span style=${{ marginLeft: 4, fontSize: '13px', fontWeight: 'bold' }}>進階搜尋</span>
+                        ${(uiFilters.director || uiFilters.maker || uiFilters.publisher) && html`<span style=${{ marginLeft: 6, width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2196F3', display: 'inline-block' }} title="已有進階篩選條件" />`}
+                    </div>
+                    ${showAdvanced && html`
+                        <div style=${{ paddingLeft: 4 }}>
+                            <div className="filter-group">
+                                <label className="filter-label">導演</label>
+                                <input className="filter-input" value=${uiFilters.director} onInput=${e => setUiFilters({ ...uiFilters, director: e.target.value })} placeholder="搜尋導演..." />
+                                <${SearchHelpText} />
+                            </div>
 
-            <div className="filter-group">
-                <label className="filter-label">製作商</label>
-                <input className="filter-input" value=${uiFilters.maker} onInput=${e => setUiFilters({ ...uiFilters, maker: e.target.value })} placeholder="搜尋製作商..." />
-                <${SearchHelpText} />
-            </div>
+                            <div className="filter-group">
+                                <label className="filter-label">製作商</label>
+                                <input className="filter-input" value=${uiFilters.maker} onInput=${e => setUiFilters({ ...uiFilters, maker: e.target.value })} placeholder="搜尋製作商..." />
+                                <${SearchHelpText} />
+                            </div>
 
-            <div className="filter-group">
-                <label className="filter-label">發行商</label>
-                <input className="filter-input" value=${uiFilters.publisher} onInput=${e => setUiFilters({ ...uiFilters, publisher: e.target.value })} placeholder="搜尋發行商..." />
-                <${SearchHelpText} />
-            </div>
+                            <div className="filter-group">
+                                <label className="filter-label">發行商</label>
+                                <input className="filter-input" value=${uiFilters.publisher} onInput=${e => setUiFilters({ ...uiFilters, publisher: e.target.value })} placeholder="搜尋發行商..." />
+                                <${SearchHelpText} />
+                            </div>
+                        </div>
+                    `}
+                </div>
 
-            <div className="filter-group">
-                <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                    <input type="checkbox" checked=${uiFilters.hasFavActor || false} onChange=${e => setUiFilters({ ...uiFilters, hasFavActor: e.target.checked })} style=${{ marginRight: 8 }} />
-                    關注演員
-                </label>
-            </div>
+                <div className="filter-group">
+                    <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked=${uiFilters.hasFavActor || false} onChange=${e => setUiFilters({ ...uiFilters, hasFavActor: e.target.checked })} style=${{ marginRight: 8 }} />
+                        關注演員
+                    </label>
+                </div>
 
-            <div className="filter-group">
-                <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                    <input type="checkbox" checked=${uiFilters.isWatchLater || false} onChange=${e => setUiFilters({ ...uiFilters, isWatchLater: e.target.checked })} style=${{ marginRight: 8 }} />
-                    待看關注
-                </label>
-            </div>
+                <div className="filter-group">
+                    <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked=${uiFilters.isWatchLater || false} onChange=${e => setUiFilters({ ...uiFilters, isWatchLater: e.target.checked })} style=${{ marginRight: 8 }} />
+                        待看關注
+                    </label>
+                </div>
 
-            <${TagFilterSidebar} selectedTagIds=${uiFilters.tags} onChange=${newTags => setUiFilters({ ...uiFilters, tags: newTags })} />
-
-            <div className="sidebar-actions" style=${{ display: 'flex', gap: '8px', marginTop: '24px', paddingBottom: '8px' }}>
-                <button className="btn-block" style=${{ flex: 1 }} onClick=${onApply}>套用篩選</button>
-                <button className="btn-block" style=${{ flex: 1 }} onClick=${onClear}>清除篩選</button>
+                <${TagFilterSidebar} selectedTagIds=${uiFilters.tags} onChange=${newTags => setUiFilters({ ...uiFilters, tags: newTags })} />
             </div>
         </div>`;
 }
@@ -270,7 +297,7 @@ function ActorSelector({ selectedActors, onChange, inputValue, onInputChange }) 
         const trimmedName = inputValue.trim();
         const existing = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(trimmedName);
         if (existing) return alert('已存在相同名稱的演員');
-        
+
         const actorId = getOrCreateActorId(db, trimmedName);
         if (actorId) {
             const actorNumber = db.prepare('SELECT actor_number FROM actors WHERE id = ?').get(actorId).actor_number;
@@ -357,15 +384,15 @@ function TagSelector({ selectedTags, onChange }) {
                     <div className="group-title">${group.name}</div>
                     <div className="tag-chips">
                         ${group.tags.map(tag => {
-                            const isSelected = selectedTags.some(t => t.id === tag.id);
-                            const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
-                            if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
-                            return html`
+        const isSelected = selectedTags.some(t => t.id === tag.id);
+        const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
+        if (isSelected && tag.color) style.boxShadow = '0 0 2px #333';
+        return html`
                                 <div className="tag-chip ${isSelected ? 'selected' : ''}" style=${style} onClick=${() => toggleTag(tag)}>
                                     ${tag.name}
                                     ${isSelected && html`<${Check} size=${12} style=${{ marginLeft: 4 }} />`}
                                 </div>`;
-                        })}
+    })}
                         ${group.tags.length === 0 && html`<span style=${{ color: '#ccc', fontSize: 12 }}>無標籤</span>`}
                     </div>
                 </div>
@@ -390,15 +417,15 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
         if (!db) return;
         try {
             setWork(db.prepare('SELECT * FROM works WHERE id=?').get(workId));
-            
+
             const loadedImages = db.prepare('SELECT * FROM work_images WHERE work_id = ? ORDER BY sort_order ASC').all(workId).map(row => ({
                 id: row.id,
                 url: getFileUrl(path.join(worksImgDir, row.file_name)),
                 isCover: row.is_cover === 1
             }));
-            
+
             setImages(loadedImages);
-            
+
             const coverIndex = loadedImages.findIndex(img => img.isCover);
             if (coverIndex !== -1) {
                 setPreviewIndex(coverIndex);
@@ -424,10 +451,10 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
     };
 
     const handleMiddleClickActor = (e, actor) => {
-        if (e.button === 1) { 
+        if (e.button === 1) {
             e.preventDefault();
-            if (!actor.actor_id) return; 
-            
+            if (!actor.actor_id) return;
+
             const currentActors = uiFilters.actor?.items || [];
             if (!currentActors.find(a => a.id === actor.actor_id)) {
                 setUiFilters({
@@ -443,7 +470,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
     };
 
     const handleMiddleClickTag = (e, tagId) => {
-        if (e.button === 1) { 
+        if (e.button === 1) {
             e.preventDefault();
             const currentTags = uiFilters.tags || [];
             if (!currentTags.includes(tagId)) {
@@ -518,28 +545,28 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                         <label className="filter-label">演員</label>
                         <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
                             ${linkedActors.map(actor => {
-                                const isRealActor = !!actor.actor_id;
-                                const isMissingImage = isRealActor && !actor.image_path;
+        const isRealActor = !!actor.actor_id;
+        const isMissingImage = isRealActor && !actor.image_path;
 
-                                return html`<span 
-                                    style=${{ 
-                                        padding: '4px 8px', 
-                                        borderRadius: '4px', 
-                                        backgroundColor: isMissingImage ? '#fff3cd' : '#e3f2fd', 
-                                        color: isMissingImage ? '#856404' : (isRealActor ? '#2196F3' : '#333'), 
-                                        cursor: isRealActor ? 'pointer' : 'default', 
-                                        textDecoration: isRealActor ? 'underline' : 'none', 
-                                        fontWeight: isRealActor ? 'bold' : 'normal',
-                                        display: 'inline-flex',
-                                        alignItems: 'center'
-                                    }} 
+        return html`<span 
+                                    style=${{
+                padding: '4px 8px',
+                borderRadius: '4px',
+                backgroundColor: isMissingImage ? '#fff3cd' : '#e3f2fd',
+                color: isMissingImage ? '#856404' : (isRealActor ? '#2196F3' : '#333'),
+                cursor: isRealActor ? 'pointer' : 'default',
+                textDecoration: isRealActor ? 'underline' : 'none',
+                fontWeight: isRealActor ? 'bold' : 'normal',
+                display: 'inline-flex',
+                alignItems: 'center'
+            }} 
                                     onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} ${isMissingImage ? '(無圖片) ' : ''}(中鍵點擊加入篩選)` : '純文字標籤'}>
                                     ${isMissingImage && html`<span style=${{ color: '#dc3545', fontWeight: 'bold', marginRight: '4px', textDecoration: 'none' }}>!</span>`}
                                     ${actor.name}
                                 </span>`;
-                            })}
+    })}
                             ${linkedActors.length === 0 && html`<span style=${{ color: '#999' }}>無關聯演員</span>`}
                         </div>
                     </div>
@@ -587,7 +614,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [formData, setFormData] = React.useState({ work_number: '', name: '', release_date: '', resolution: '', duration: '', file_size: '', director: '', maker: '', publisher: '', rating: '', is_favorite: 0, notes: '' });
     const [images, setImages] = React.useState([]);
     const [deletedImageIds, setDeletedImageIds] = React.useState([]);
-    const [selectedImageIds, setSelectedImageIds] = React.useState([]); 
+    const [selectedImageIds, setSelectedImageIds] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
     const [dragOver, setDragOver] = React.useState(false);
     const [draggingIndex, setDraggingIndex] = React.useState(null);
@@ -648,7 +675,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         const files = Array.from(fileList);
         const newImages = [];
         let hasUnsupported = false;
-        
+
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             let realPath = file.path;
@@ -657,7 +684,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
             const ext = path.extname(realPath).toLowerCase();
             const isVideo = file.type.startsWith('video/') || ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv'].includes(ext);
-            
+
             if (isVideo) {
                 setIsLoading(true);
                 try {
@@ -665,7 +692,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     setFormData(prev => ({
                         ...prev,
                         resolution: metadata.resolution,
-                        file_size: metadata.duration 
+                        file_size: metadata.duration
                     }));
                 } catch (err) {
                     console.error("Video metadata error:", err);
@@ -684,27 +711,27 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 hasUnsupported = true;
             }
         }
-        
+
         if (hasUnsupported) {
             alert('上傳失敗：圖片格式不支援');
         }
-        
+
         if (newImages.length > 0) setImages(prev => [...prev, ...newImages]);
     };
 
     const handleDropUpload = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); if (e.dataTransfer.files.length > 0) processNewFiles(e.dataTransfer.files); };
     const handleSortDrop = (e, targetIndex) => {
-        e.preventDefault(); 
-        e.stopPropagation(); 
+        e.preventDefault();
+        e.stopPropagation();
         if (draggingIndex === null || draggingIndex === targetIndex) return;
         setImages(prev => { const newList = [...prev]; const [moved] = newList.splice(draggingIndex, 1); newList.splice(targetIndex, 0, moved); return newList; });
         setDraggingIndex(null);
     };
 
     const handleDeleteImage = (index, e) => {
-        e.stopPropagation(); 
+        e.stopPropagation();
         if (!confirm('移除此圖片?')) return;
-        const img = images[index]; 
+        const img = images[index];
         if (img.isStored) setDeletedImageIds(p => [...p, img.dbId]);
         setImages(p => p.filter((_, i) => i !== index));
         setSelectedImageIds(p => p.filter(id => id !== img.id));
@@ -717,11 +744,11 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
 
         const imagesToDelete = images.filter(img => selectedImageIds.includes(img.id));
         const storedIdsToDelete = imagesToDelete.filter(img => img.isStored).map(img => img.dbId);
-        
+
         if (storedIdsToDelete.length > 0) {
             setDeletedImageIds(p => [...p, ...storedIdsToDelete]);
         }
-        
+
         setImages(p => p.filter(img => !selectedImageIds.includes(img.id)));
         setSelectedImageIds([]);
         setPreviewIndex(0);
@@ -752,7 +779,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     newData.actors.forEach(actorName => {
                         const trimmedName = actorName.trim();
                         if (!trimmedName) return;
-                        
+
                         const actorId = getOrCreateActorId(db, trimmedName);
                         if (actorId) {
                             const actorInfo = db.prepare('SELECT id, name, actor_number FROM actors WHERE id = ?').get(actorId);
@@ -760,7 +787,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                                 if (!currentSelectedActors.some(a => a.id === actorInfo.id)) {
                                     currentSelectedActors.push({
                                         id: actorInfo.id,
-                                        name: actorInfo.name, 
+                                        name: actorInfo.name,
                                         actor_number: actorInfo.actor_number,
                                         isTextOnly: false
                                     });
@@ -786,6 +813,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         if (!formData.work_number || !formData.name) return alert('編號與名稱必填');
 
         const ratingVal = formData.rating.trim() === '' ? null : parseFloat(formData.rating);
+        if (ratingVal !== null && isNaN(ratingVal)) return alert('評分格式不正確，請輸入數字 (例如: 3 或 4.5)');
 
         setIsLoading(true);
         setTimeout(() => {
@@ -823,7 +851,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                             const timestamp = Date.now();
                             const randomSuffix = Math.floor(Math.random() * 10000);
                             const newName = `works_${formData.work_number}_${timestamp}_${randomSuffix}${ext}`;
-                            
+
                             fs.copyFileSync(img.filePath, path.join(worksImgDir, newName));
                             insertImg.run(workId, newName, idx + 1, isCover);
                         }
@@ -943,7 +971,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                         <label className="filter-label">演員</label>
                         <${ActorSelector} selectedActors=${selectedActors} onChange=${setSelectedActors} inputValue=${actorInputValue} onInputChange=${setActorInputValue} />
                     </div>
-                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="number" step="0.1" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
+                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="text" inputMode="decimal" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
                     
                     <div className="filter-group" style=${{ padding: '8px 0', marginBottom: '8px' }}>
                         <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', margin: 0 }}>
@@ -988,12 +1016,12 @@ function WorkCard({ work, onClick }) {
         <div className="work-card" onClick=${() => onClick(work.id)}>
             <div className="card-cover">
                 ${coverUrl && !imageError ?
-                    html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
-                    (imageError ?
-                        html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
-                        html`<${Film} size=${48} />`
-                    )
-                }
+            html`<img src="${coverUrl}" onError=${() => setImageError(true)} />` :
+            (imageError ?
+                html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700', textAlign: 'center', height: '100%' }}><${AlertTriangle} size=${48} /><span style=${{ fontWeight: 'bold' }}>ERROR</span></div>` :
+                html`<${Film} size=${48} />`
+            )
+        }
             </div>
             <div className="card-info">
                 <div style=${{ display: 'flex', justifyContent: 'space-between', gap: '4px', marginBottom: '4px', height: '56px', overflow: 'hidden' }}>

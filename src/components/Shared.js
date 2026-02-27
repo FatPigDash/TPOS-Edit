@@ -82,7 +82,11 @@ function LoadingOverlay({ show, message = "正在處理中..." }) {
 }
 
 function SearchHelpText() {
-    return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.2 }}>說明: + = AND, | = OR, - = NOT (空格視為文字)<br />當「-」前面有空格時才會觸發NOT條件</div>`;
+    return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.4 }}>說明: + = AND, | = OR, - = NOT (空格視為文字)<br />字串中的「-」視為一般文字 (如 ABC-123)</div>`;
+}
+
+function CodeSearchHelpText() {
+    return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.4 }}>說明: 空格分段, | = OR<br />開頭「-」= NOT, 開頭「+」= AND (字串內「-」視為文字)</div>`;
 }
 
 function Pagination({ currentPage, totalPages, onPageChange }) {
@@ -90,7 +94,7 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
     let startPage = Math.max(1, currentPage - 4);
     let endPage = Math.min(totalPages, startPage + 9);
     if (endPage - startPage < 9) startPage = Math.max(1, endPage - 9);
-    
+
     const pages = [];
     for (let i = startPage; i <= endPage; i++) pages.push(i);
 
@@ -132,5 +136,6 @@ module.exports = {
     ImageViewerModal,
     LoadingOverlay,
     SearchHelpText,
+    CodeSearchHelpText,
     Pagination
 };

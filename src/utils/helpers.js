@@ -26,7 +26,7 @@ function parseNameWithAliases(rawName) {
     if (!rawName) return { name: '', aliases: [] };
 
     const extractedAliases = [];
-    
+
     // 1. 提取括號內的內容
     const regex = /\(([^)]+)\)/g;
     let match;
@@ -47,13 +47,13 @@ function parseNameWithAliases(rawName) {
 // 智慧比對演員 (核心邏輯更新)
 function findSmartMatchActor(db, rawName) {
     if (!db || !rawName) return null;
-    
+
     // 1. 產生候選關鍵字清單 (Candidate Keywords)
     const candidates = new Set();
-    
+
     // 使用新的解析函式來取得拆解後的名稱
     const parsed = parseNameWithAliases(rawName);
-    
+
     // A. 原始輸入
     candidates.add(rawName.trim());
     // B. 主名稱
@@ -63,7 +63,7 @@ function findSmartMatchActor(db, rawName) {
 
     // 2. 針對每個候選字進行資料庫比對
     const candidateArray = Array.from(candidates);
-    
+
     for (const keyword of candidateArray) {
         if (!keyword) continue;
 
@@ -73,7 +73,7 @@ function findSmartMatchActor(db, rawName) {
 
         // 步驟 2-2: 比對「別名 (aliases)」欄位 (包含搜尋)
         const aliasCandidates = db.prepare('SELECT id, aliases FROM actors WHERE aliases LIKE ? AND is_deleted = 0').all(`%${keyword}%`);
-        
+
         for (const row of aliasCandidates) {
             if (row.aliases) {
                 // 將資料庫的 "A, B, C" 拆開來精確比對
@@ -144,6 +144,46 @@ function parseSearchQuery(input, dbField) {
     return { sql: ` AND (${sqlParts.join(' OR ')})`, params: params };
 }
 
+// 識別碼專用搜尋解析器: 空格切分段落，只有段落開頭的 - 才視為 NOT
+function parseCodeSearchQuery(input, dbField) {
+    if (!input || !input.trim()) return { sql: "", params: [] };
+    // 先以 ' | ' 切出 OR 群組
+    const orGroups = input.split(' | ');
+    const sqlParts = [];
+    const params = [];
+
+    orGroups.forEach(group => {
+        // 以空格切分 token，每個 token 整體判斷前綴
+        const tokens = group.trim().split(/\s+/).filter(t => t);
+        const groupConditions = [];
+
+        tokens.forEach(token => {
+            if (token === '|') return; // 忽略殘餘 | 符號
+            if (token.startsWith('-') && token.length > 1) {
+                // 開頭 - 視為 NOT，剩餘部分為搜尋字串
+                const val = token.slice(1);
+                groupConditions.push(`${dbField} NOT LIKE ?`);
+                params.push(`%${val}%`);
+            } else if (token.startsWith('+') && token.length > 1) {
+                // 開頭 + 明確 AND，剩餘部分為搜尋字串
+                const val = token.slice(1);
+                groupConditions.push(`${dbField} LIKE ?`);
+                params.push(`%${val}%`);
+            } else {
+                groupConditions.push(`${dbField} LIKE ?`);
+                params.push(`%${token}%`);
+            }
+        });
+
+        if (groupConditions.length > 0) {
+            sqlParts.push(`(${groupConditions.join(' AND ')})`);
+        }
+    });
+
+    if (sqlParts.length === 0) return { sql: "", params: [] };
+    return { sql: ` AND (${sqlParts.join(' OR ')})`, params: params };
+}
+
 function hexToRgb(hex) {
     if (!hex) return '無顏色';
     hex = hex.replace('#', '');
@@ -178,6 +218,7 @@ module.exports = {
     findSmartMatchActor,
     parseNameWithAliases, // Export New Function
     parseSearchQuery,
+    parseCodeSearchQuery,
     hexToRgb,
     getDragAfterElement,
     stopPropagation
