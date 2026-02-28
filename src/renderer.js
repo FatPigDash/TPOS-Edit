@@ -249,11 +249,11 @@ function App() {
             <div className="navbar">
                 <div className="nav-title">The Pile of Shame (V2.4.2)</div>
                 <div className="nav-tabs">
-                    <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
-                    <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
-                    <button className="nav-btn ${activeTab === 'actors' ? 'active' : ''}" onClick=${() => setActiveTab('actors')}><${Users} size=${16} /> 演員資料庫</button>
+                    <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
+                    <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
+                    <button className="nav-btn ${activeTab === 'actors' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('actors')}><${Users} size=${16} /> 演員資料庫</button>
                 </div>
-                ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" onClick=${() => { setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
+                ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
             </div>
             <div style=${{ flex: 1, overflow: 'hidden' }}>
                 ${activeTab === 'works' ? (
