@@ -84,6 +84,7 @@ function TagSystem() {
 
     const [dropTarget, setDropTarget] = React.useState(null);
     const [pendingColor, setPendingColor] = React.useState(null);
+    const [copiedColor, setCopiedColor] = React.useState(null);
     const boardRef = React.useRef(null);
     const dragScrollRef = React.useRef({ isDown: false, startX: 0, scrollLeft: 0 });
     const lastDragOverTime = React.useRef(0);
@@ -381,6 +382,14 @@ function TagSystem() {
                                     </button>
                                     <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
                                     
+                                    <div style=${{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                        <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12 }} onClick=${() => { if (pendingColor) { setCopiedColor(pendingColor); } }} title=${pendingColor ? `複製: ${pendingColor}` : '尚無顏色可複製'} disabled=${!pendingColor}>
+                                            複製代碼 ${pendingColor ? pendingColor.toUpperCase() : ''}
+                                        </button>
+                                        <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12, opacity: copiedColor ? 1 : 0.45 }} onClick=${() => { if (copiedColor) setPendingColor(copiedColor); }} title=${copiedColor ? `貼上: ${copiedColor}` : '尚未複製顏色'} disabled=${!copiedColor}>
+                                            貼上代碼 ${copiedColor ? copiedColor.toUpperCase() : ''}
+                                        </button>
+                                    </div>
                                     <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
                                         <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveGroupColor(group.id)}>套用顏色</button> 
                                         <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenGroupId(null)}>取消</button>
@@ -425,6 +434,14 @@ function TagSystem() {
                                             </button>
                                             <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
                                             
+                                            <div style=${{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12 }} onClick=${() => { if (pendingColor) { setCopiedColor(pendingColor); } }} title=${pendingColor ? `複製: ${pendingColor}` : '尚無顏色可複製'} disabled=${!pendingColor}>
+                                                    複製代碼 ${pendingColor ? pendingColor.toUpperCase() : ''}
+                                                </button>
+                                                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12, opacity: copiedColor ? 1 : 0.45 }} onClick=${() => { if (copiedColor) setPendingColor(copiedColor); }} title=${copiedColor ? `貼上: ${copiedColor}` : '尚未複製顏色'} disabled=${!copiedColor}>
+                                                    貼上代碼 ${copiedColor ? copiedColor.toUpperCase() : ''}
+                                                </button>
+                                            </div>
                                             <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
                                                 <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveTagColor(tag.id)}>套用顏色</button> 
                                                 <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenTagId(null)}>取消</button>

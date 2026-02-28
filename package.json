@@ -31,7 +31,7 @@
   },
   "build": {
     "appId": "com.tpos.app",
-    "productName": "TPOS V2.4.2",
+    "productName": "TPOS V2.4.3",
     "directories": {
       "output": "dist"
     },
