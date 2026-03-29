@@ -271,7 +271,7 @@ function App() {
         <${LoadingOverlay} show=${isLoading} />
         <div style=${{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
             <div className="navbar">
-                <div className="nav-title">The Pile of Shame (V3.0.0)</div>
+                <div className="nav-title">The Pile of Shame (V3.0.1)</div>
                 <div className="nav-tabs">
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>

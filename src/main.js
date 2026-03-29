@@ -69,6 +69,7 @@ function createWindow() {
     width: 1280,
     height: 800,
     title: "The Pile of Shame (V1.3.3)", // 更新標題
+    icon: path.join(__dirname, '../assets/icon.ico'),
     autoHideMenuBar: false,
     webPreferences: {
       nodeIntegration: true,
