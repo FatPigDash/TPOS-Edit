@@ -93,11 +93,25 @@ function App() {
                 }
 
                 if (appliedFilters.tags?.length > 0) {
-                    joinClause += ' JOIN work_tag_link wtl ON w.id = wtl.work_id';
-                    whereClauses.push(`wtl.tag_id IN (${appliedFilters.tags.map(() => '?').join(',')})`);
-                    params.push(...appliedFilters.tags);
-                    groupBy = 'GROUP BY w.id';
-                    having = `HAVING COUNT(DISTINCT wtl.tag_id) = ${appliedFilters.tags.length}`;
+                    const includeTags = appliedFilters.tags.filter(t => t.mode === 'include');
+                    const excludeTags = appliedFilters.tags.filter(t => t.mode === 'exclude');
+
+                    if (includeTags.length > 0) {
+                        // 包含標籤: AND 邏輯，作品必須包含所有指定標籤
+                        joinClause += ' JOIN work_tag_link wtl ON w.id = wtl.work_id';
+                        whereClauses.push(`wtl.tag_id IN (${includeTags.map(() => '?').join(',')})`);
+                        params.push(...includeTags.map(t => t.id));
+                        groupBy = 'GROUP BY w.id';
+                        having = `HAVING COUNT(DISTINCT wtl.tag_id) = ${includeTags.length}`;
+                    }
+
+                    if (excludeTags.length > 0) {
+                        // 排除標籤: 作品必須不包含任何一個排除標籤
+                        excludeTags.forEach(t => {
+                            whereClauses.push(`NOT EXISTS (SELECT 1 FROM work_tag_link etl WHERE etl.work_id = w.id AND etl.tag_id = ?)`);
+                            params.push(t.id);
+                        });
+                    }
                 }
 
                 const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -127,10 +141,14 @@ function App() {
                 // 使用動態 orderByClause
                 const rows = db.prepare(`SELECT ${selectFields} FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
 
+                const firstGroupOrderResult = db.prepare('SELECT MIN(sort_order) as min_order FROM tag_groups').get();
+                const globalFirstGroupOrder = firstGroupOrderResult ? firstGroupOrderResult.min_order : null;
+
                 rows.forEach(row => {
                     try {
-                        row.tags = db.prepare(`SELECT t.name, t.color FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
-                    } catch (e) { row.tags = []; }
+                        row.tags = db.prepare(`SELECT t.name, t.color, tg.sort_order as group_sort_order FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
+                        row.firstGroupOrder = globalFirstGroupOrder;
+                    } catch (e) { row.tags = []; row.firstGroupOrder = null; }
                 });
 
                 setWorks(rows);
@@ -218,8 +236,14 @@ function App() {
         }
         if (appliedFilters.tags?.length > 0 && db) {
             try {
-                const names = db.prepare(`SELECT name FROM tags WHERE id IN (${appliedFilters.tags.map(() => '?').join(',')})`).all(...appliedFilters.tags).map(t => t.name);
-                conds.push(`標籤: ${names.join(' + ')}`);
+                const includeTags = appliedFilters.tags.filter(t => t.mode === 'include');
+                const excludeTags = appliedFilters.tags.filter(t => t.mode === 'exclude');
+                const allIds = appliedFilters.tags.map(t => t.id);
+                const nameRows = db.prepare(`SELECT id, name FROM tags WHERE id IN (${allIds.map(() => '?').join(',')})`).all(...allIds);
+                const nameMap = {};
+                nameRows.forEach(r => { nameMap[r.id] = r.name; });
+                if (includeTags.length > 0) conds.push(`包含標籤: ${includeTags.map(t => nameMap[t.id] || t.id).join(' + ')}`);
+                if (excludeTags.length > 0) conds.push(`排除標籤: ${excludeTags.map(t => nameMap[t.id] || t.id).join(' + ')}`);
             } catch (e) { conds.push(`標籤: ${appliedFilters.tags.length}個`); }
         }
         return conds;
@@ -247,7 +271,7 @@ function App() {
         <${LoadingOverlay} show=${isLoading} />
         <div style=${{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
             <div className="navbar">
-                <div className="nav-title">The Pile of Shame (V2.4.3)</div>
+                <div className="nav-title">The Pile of Shame (V3.0.0)</div>
                 <div className="nav-tabs">
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>

@@ -496,6 +496,8 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                         case 'number_asc': orderBy = 'actor_number ASC'; break;
                         case 'name_asc': orderBy = 'name ASC'; break;
                         case 'name_desc': orderBy = 'name DESC'; break;
+                        case 'work_count_desc': orderBy = 'work_count DESC, actor_number DESC'; break;
+                        case 'work_count_asc': orderBy = 'work_count ASC, actor_number DESC'; break;
                     }
 
                     const rows = db.prepare(`
@@ -676,6 +678,8 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                             <option value="number_asc">依編號 (由小到大)</option>
                             <option value="name_asc">依名字 (由小到大)</option>
                             <option value="name_desc">依名字 (由大到小)</option>
+                            <option value="work_count_desc">依作品數量 (多 → 少)</option>
+                            <option value="work_count_asc">依作品數量 (少 → 多)</option>
                         </select>
                         <button className="btn-ghost" title="批次提取別名 (不修改顯示名稱)" style=${{ padding: '6px' }} onClick=${handleBatchCleanNames} disabled=${viewMode === 'duplicates'}>
                             <${Wand2} size=${20} />

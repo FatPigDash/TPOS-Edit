@@ -51,16 +51,48 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
 
     const toggleGroup = (groupId) => { setExpandedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] })); };
 
+    // 三態切換: 未選 -> 包含(include) -> 排除(exclude) -> 未選
     const toggleTag = (tagId) => {
-        if (selectedTagIds.includes(tagId)) onChange(selectedTagIds.filter(id => id !== tagId));
-        else onChange([...selectedTagIds, tagId]);
+        const existing = selectedTagIds.find(t => t.id === tagId);
+        if (!existing) {
+            // 未選 -> 包含
+            onChange([...selectedTagIds, { id: tagId, mode: 'include' }]);
+        } else if (existing.mode === 'include') {
+            // 包含 -> 排除
+            onChange(selectedTagIds.map(t => t.id === tagId ? { id: tagId, mode: 'exclude' } : t));
+        } else {
+            // 排除 -> 未選
+            onChange(selectedTagIds.filter(t => t.id !== tagId));
+        }
+    };
+
+    // 自訂三態核取方塊元件
+    const TriStateCheckbox = ({ tagId }) => {
+        const entry = selectedTagIds.find(t => t.id === tagId);
+        const mode = entry ? entry.mode : 'none';
+
+        const boxStyle = {
+            width: '16px', height: '16px', minWidth: '16px',
+            border: '2px solid',
+            borderColor: mode === 'include' ? '#2196F3' : (mode === 'exclude' ? '#e53935' : '#bbb'),
+            borderRadius: '3px',
+            backgroundColor: mode === 'include' ? '#2196F3' : (mode === 'exclude' ? '#e53935' : 'white'),
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', marginRight: '6px', flexShrink: 0,
+            fontSize: '11px', fontWeight: 'bold', color: 'white', lineHeight: 1,
+            userSelect: 'none'
+        };
+
+        const symbol = mode === 'include' ? '✓' : (mode === 'exclude' ? '−' : '');
+        return html`<div style=${boxStyle} onClick=${(e) => { e.preventDefault(); toggleTag(tagId); }}>${symbol}</div>`;
     };
 
     return html`
         <div className="tag-filter-sidebar" style=${{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
-            <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選 (AND)</div>
+            <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選</div>
             ${groups.map(group => {
-        const selectedCount = group.tags.filter(t => selectedTagIds.includes(t.id)).length;
+        const includeCount = group.tags.filter(t => selectedTagIds.find(s => s.id === t.id && s.mode === 'include')).length;
+        const excludeCount = group.tags.filter(t => selectedTagIds.find(s => s.id === t.id && s.mode === 'exclude')).length;
         const isExpanded = expandedGroups[group.id];
         const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
 
@@ -69,16 +101,22 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
                     <div onClick=${() => toggleGroup(group.id)} style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '6px', backgroundColor: '#f9f9f9', borderRadius: '4px', fontSize: '14px', ...groupStyle }}>
                         ${isExpanded ? html`<${ChevronDown} size=${14} />` : html`<${ChevronRightIcon} size=${14} />`}
                         <span style=${{ marginLeft: '4px', flex: 1 }}>${group.name}</span>
-                        ${selectedCount > 0 && html`<span style=${{ backgroundColor: '#2196F3', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px' }}>${selectedCount}</span>`}
+                        ${includeCount > 0 && html`<span style=${{ backgroundColor: '#2196F3', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px', marginLeft: '4px' }}>${includeCount}</span>`}
+                        ${excludeCount > 0 && html`<span style=${{ backgroundColor: '#e53935', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px', marginLeft: '2px' }}>${excludeCount}</span>`}
                     </div>
                     ${isExpanded && html`
                         <div style=${{ paddingLeft: '20px', paddingBottom: '8px' }}>
-                            ${group.tags.map(tag => html`
-                                <label key=${tag.id} style=${{ display: 'flex', alignItems: 'center', padding: '4px 0', cursor: 'pointer', fontSize: '13px' }}>
-                                    <input type="checkbox" checked=${selectedTagIds.includes(tag.id)} onChange=${() => toggleTag(tag.id)} style=${{ marginRight: '6px' }} />
-                                    <span style=${selectedTagIds.includes(tag.id) ? { color: '#2196F3', fontWeight: 'bold' } : {}}>${tag.name}</span>
-                                </label>
-                            `)}
+                            ${group.tags.map(tag => {
+            const entry = selectedTagIds.find(s => s.id === tag.id);
+            const mode = entry ? entry.mode : 'none';
+            const textStyle = mode === 'include' ? { color: '#2196F3', fontWeight: 'bold' } :
+                (mode === 'exclude' ? { color: '#e53935', fontWeight: 'bold', textDecoration: 'line-through' } : {});
+            return html`
+                                <label key=${tag.id} style=${{ display: 'flex', alignItems: 'center', padding: '4px 0', cursor: 'pointer', fontSize: '13px' }} onClick=${(e) => { e.preventDefault(); toggleTag(tag.id); }}>
+                                    <${TriStateCheckbox} tagId=${tag.id} />
+                                    <span style=${textStyle}>${tag.name}</span>
+                                </label>`;
+        })}
                             ${group.tags.length === 0 && html`<div style=${{ fontSize: '12px', color: '#ccc', padding: '4px 0' }}>無標籤</div>`}
                         </div>
                     `}
@@ -402,6 +440,24 @@ function TagSelector({ selectedTags, onChange }) {
 
 // 8. 作品系統元件 (Work System)
 
+// 時間字串解析 (支援 HH:MM:SS、MM:SS 格式，以及純數字視為分鐘；回傳秒數，無法解析回傳 null)
+function parseTimeToSeconds(timeStr) {
+    if (!timeStr && timeStr !== 0) return null;
+    const s = String(timeStr).trim();
+    if (!s) return null;
+    // HH:MM:SS 或 MM:SS 格式
+    if (s.includes(':')) {
+        const parts = s.split(':').map(p => parseFloat(p));
+        if (parts.some(isNaN)) return null;
+        if (parts.length === 3) return Math.round(parts[0] * 3600 + parts[1] * 60 + parts[2]);
+        if (parts.length === 2) return Math.round(parts[0] * 60 + parts[1]);
+    }
+    // 純數字: 視為分鐘
+    const num = parseFloat(s);
+    if (!isNaN(num)) return Math.round(num * 60);
+    return null;
+}
+
 function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply, onClear }) {
     const [work, setWork] = React.useState(null);
     const [images, setImages] = React.useState([]);
@@ -473,10 +529,10 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
         if (e.button === 1) {
             e.preventDefault();
             const currentTags = uiFilters.tags || [];
-            if (!currentTags.includes(tagId)) {
+            if (!currentTags.find(t => t.id === tagId)) {
                 setUiFilters({
                     ...uiFilters,
-                    tags: [...currentTags, tagId]
+                    tags: [...currentTags, { id: tagId, mode: 'include' }]
                 });
             }
             setIsFilterSidebarOpen(true);
@@ -536,7 +592,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                     <div className="filter-group"><label className="filter-label">發行日期</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.release_date || '未設定'}</div></div>
                     <div className="filter-group"><label className="filter-label">影片解析度</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.resolution || ''}</div></div>
                     <div className="filter-group"><label className="filter-label">影片長度</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.duration || ''}</div></div>
-                    <div className="filter-group"><label className="filter-label">實際檔案長度</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.file_size || ''}</div></div>
+                    <div className="filter-group"><label className="filter-label">實際檔案長度</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: '10px' }}>${work.file_size || ''}${(() => { const dSec = parseTimeToSeconds(work.duration); const fSec = parseTimeToSeconds(work.file_size); return (dSec !== null && fSec !== null && (dSec - fSec) >= 900) ? html`<span style=${{ color: '#dc3545', fontWeight: 'bold', fontSize: '13px' }}>⚠ 影片長度不足</span>` : null; })()}</div></div>
                     <div className="filter-group"><label className="filter-label">導演</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.director || ''}</div></div>
                     <div className="filter-group"><label className="filter-label">製作商</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.maker || ''}</div></div>
                     <div className="filter-group"><label className="filter-label">發行商</label><div style=${{ padding: '8px 0', borderBottom: '1px solid #eee' }}>${work.publisher || ''}</div></div>
@@ -962,7 +1018,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     <div className="filter-group"><label className="filter-label">發行日期</label><input type="date" className="filter-input" value=${formData.release_date || ''} onInput=${e => handleChange('release_date', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">影片解析度</label><input className="filter-input" value=${formData.resolution || ''} onInput=${e => handleChange('resolution', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">影片長度</label><input className="filter-input" value=${formData.duration || ''} onInput=${e => handleChange('duration', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">實際檔案長度</label><input className="filter-input" value=${formData.file_size || ''} onInput=${e => handleChange('file_size', e.target.value)} onMouseDown=${stopProp} /></div>
+                    <div className="filter-group"><div style=${{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}><label className="filter-label" style=${{ margin: 0 }}>實際檔案長度</label>${(() => { const dSec = parseTimeToSeconds(formData.duration); const fSec = parseTimeToSeconds(formData.file_size); return (dSec !== null && fSec !== null && (dSec - fSec) >= 900) ? html`<span style=${{ color: '#dc3545', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap' }}>⚠ 影片長度不足</span>` : null; })()}</div><input className="filter-input" value=${formData.file_size || ''} onInput=${e => handleChange('file_size', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">導演</label><input className="filter-input" value=${formData.director || ''} onInput=${e => handleChange('director', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">製作商</label><input className="filter-input" value=${formData.maker || ''} onInput=${e => handleChange('maker', e.target.value)} onMouseDown=${stopProp} /></div>
                     <div className="filter-group"><label className="filter-label">發行商</label><input className="filter-input" value=${formData.publisher || ''} onInput=${e => handleChange('publisher', e.target.value)} onMouseDown=${stopProp} /></div>
@@ -1012,6 +1068,12 @@ function WorkCard({ work, onClick }) {
 
     React.useEffect(() => { setImageError(false); }, [work.id, work.cover_image]);
 
+    // 分離第一組標籤與其他標籤 (以全域第一組的 sort_order 為固定基準)
+    const allTags = work.tags || [];
+    const firstGroupOrder = work.firstGroupOrder ?? null;
+    const firstGroupTags = firstGroupOrder !== null ? allTags.filter(t => t.group_sort_order === firstGroupOrder) : [];
+    const otherTags = firstGroupOrder !== null ? allTags.filter(t => t.group_sort_order !== firstGroupOrder) : allTags;
+
     return html`
         <div className="work-card" onClick=${() => onClick(work.id)}>
             <div className="card-cover">
@@ -1033,7 +1095,7 @@ function WorkCard({ work, onClick }) {
                         </div>
                     </div>
                     <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', alignContent: 'flex-start', flex: 1, minWidth: 0 }}>
-                        ${work.tags && work.tags.map(t => html`
+                        ${otherTags.map(t => html`
                             <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? getContrastYIQ(t.color) : '#333', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', height: '26px' }}>
                                 ${t.name}
                             </span>
@@ -1045,6 +1107,15 @@ function WorkCard({ work, onClick }) {
                     <div className="card-rating" style=${{ fontSize: '14px', fontWeight: 'bold', color: '#fbc02d', marginTop: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <${Star} size=${14} fill="#fbc02d" />
                         <span style=${{ fontWeight: 'bold', paddingTop: '2px' }}>${work.rating}</span>
+                    </div>
+                `}
+                ${firstGroupTags.length > 0 && html`
+                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '4px', borderTop: '1px solid #f0f0f0', paddingTop: '4px' }}>
+                        ${firstGroupTags.map(t => html`
+                            <span style=${{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', backgroundColor: t.color || '#eee', color: t.color ? getContrastYIQ(t.color) : '#333', whiteSpace: 'nowrap' }}>
+                                ${t.name}
+                            </span>
+                        `)}
                     </div>
                 `}
             </div>
