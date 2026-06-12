@@ -8,3 +8,4 @@ release/
 .DS_Store
 data/*.sqlite
 user_images/
+需求/
