@@ -7,6 +7,9 @@ const { stopPropagation } = require('../utils/helpers');
 
 // 4. 網路抓取模組 (Web Scraper)
 
+// 圖片下載請求使用的桌面瀏覽器 User-Agent (僅用於 downloadImage 的 HTTP 標頭, 不影響 BrowserWindow 本身)
+const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 async function openJavScraperWindow(keyword) {
     let url = keyword;
     if (!keyword.startsWith('http')) {
@@ -74,23 +77,74 @@ async function openJavScraperWindow(keyword) {
                     document.body.appendChild(backBtn);
                 }
 
-                // 3. 自動偵測與點擊邏輯 (延遲 1 秒執行以確保 DOM 穩定)
-                setTimeout(() => {
+                // 3. 自動偵測與點擊邏輯 (改用輪詢檢查, 避免 Cloudflare 人機驗證造成誤判)
+                //    Cloudflare 驗證頁面可能不會觸發新的 did-finish-load 事件 (原地解鎖),
+                //    因此使用 setInterval 持續檢查, 直到驗證通過、偵測到結果或逾時為止。
+                if (window.__tposCheckInterval) {
+                    clearInterval(window.__tposCheckInterval);
+                }
+                var __tposAttempts = 0;
+                window.__tposCheckInterval = setInterval(() => {
+                    __tposAttempts++;
+
+                    // 已觸發過, 停止輪詢
+                    if (document.title.indexOf('TPOS_') !== -1) {
+                        clearInterval(window.__tposCheckInterval);
+                        return;
+                    }
+
+                    // 偵測 Cloudflare 人機驗證頁面 (含中文版 Turnstile 互動式驗證)
+                    // 在驗證完成前, 不可進行「找不到/多筆結果」的判定, 否則會誤判
+                    var bodyText = ((document.body && document.body.innerText) || '').toLowerCase();
+                    var titleLower = document.title.toLowerCase();
+                    var isCloudflareChallenge = (
+                        titleLower.indexOf('just a moment') !== -1 ||
+                        titleLower.indexOf('attention required') !== -1 ||
+                        bodyText.indexOf('cloudflare') !== -1 ||
+                        bodyText.indexOf('安全驗證') !== -1 ||
+                        bodyText.indexOf('驗證您是人類') !== -1 ||
+                        bodyText.indexOf('verify you are human') !== -1 ||
+                        !!document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                        !!document.getElementById('challenge-form') ||
+                        !!document.getElementById('challenge-running') ||
+                        !!document.querySelector('.cf-turnstile, #cf-wrapper, #cf-challenge-running')
+                    );
+                    if (isCloudflareChallenge) {
+                        console.log("TPOS: Cloudflare 驗證中, 等待使用者完成驗證...");
+                        // 約 3 分鐘後放棄自動偵測, 但仍可手動點擊按鈕
+                        if (__tposAttempts >= 90) clearInterval(window.__tposCheckInterval);
+                        return;
+                    }
+
                     var titleEl = document.getElementById('video_title');
                     var btn = document.getElementById('tpos-grab-btn');
-                    
-                    // 檢查: 1.有標題元素 2.有按鈕 3.尚未觸發過 4.不是 Cloudflare 驗證頁
-                    if (titleEl && btn && document.title.indexOf('TPOS_GRAB_ACTION') === -1 && document.title.indexOf('Just a moment') === -1) {
-                         // 簡單驗證標題內容是否存在
+
+                    // 情形 1: 成功進入作品詳情頁 -> 自動點擊讀取按鈕
+                    if (titleEl && btn) {
                          var titleText = titleEl.innerText || "";
                          if (titleText.trim().length > 0) {
                              console.log("TPOS: Auto-clicking grab button...");
                              btn.innerHTML = '自動讀取中...';
                              btn.style.background = '#17a2b8'; // 變成藍色提示自動讀取
                              btn.click();
+                             clearInterval(window.__tposCheckInterval);
+                             return;
                          }
                     }
-                }, 1000);
+
+                    // 情形 2/3: 搜尋結果頁面 -> 判斷多筆結果或完全找不到
+                    if (window.location.href.indexOf('vl_searchbyid.php') !== -1) {
+                        var videoItems = document.querySelectorAll('#videothumblist .video, .videothumblist .video');
+                        if (videoItems.length > 0) {
+                            console.log("TPOS: Multiple results detected.");
+                            document.title = 'TPOS_MULTIPLE_RESULTS';
+                        } else {
+                            console.log("TPOS: No results found.");
+                            document.title = 'TPOS_NOT_FOUND';
+                        }
+                        clearInterval(window.__tposCheckInterval);
+                    }
+                }, 1500 + Math.floor(Math.random() * 1000));
             `);
         } catch (e) {
             console.error("注入按鈕失敗", e);
@@ -106,8 +160,19 @@ async function extractJavDataFromWindow(win) {
     try {
         const result = await win.webContents.executeJavaScript(`
             (function() {
-                if (document.title.includes('Just a moment')) {
-                    return { status: 'error', msg: '請先完成驗證。' };
+                var __bodyTextCheck = ((document.body && document.body.innerText) || '').toLowerCase();
+                var __isCfChallenge = (
+                    document.title.toLowerCase().indexOf('just a moment') !== -1 ||
+                    __bodyTextCheck.indexOf('cloudflare') !== -1 ||
+                    __bodyTextCheck.indexOf('安全驗證') !== -1 ||
+                    __bodyTextCheck.indexOf('驗證您是人類') !== -1 ||
+                    __bodyTextCheck.indexOf('verify you are human') !== -1 ||
+                    !!document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                    !!document.getElementById('challenge-form') ||
+                    !!document.querySelector('.cf-turnstile, #cf-wrapper, #cf-challenge-running')
+                );
+                if (__isCfChallenge) {
+                    return { status: 'error', msg: '請先完成 Cloudflare 人機驗證後再試一次。' };
                 }
                 var titleEl = document.getElementById('video_title');
                 if (!titleEl) {
@@ -120,7 +185,17 @@ async function extractJavDataFromWindow(win) {
                 var director = document.getElementById('video_director') ? document.getElementById('video_director').querySelector('.text').innerText : '';
                 var maker = document.getElementById('video_maker') ? document.getElementById('video_maker').querySelector('.text').innerText : '';
                 var publisher = document.getElementById('video_label') ? document.getElementById('video_label').querySelector('.text').innerText : '';
-                
+
+                // 抓取識別碼 (供檔案重新命名功能使用)
+                var videoId = document.getElementById('video_id') ? document.getElementById('video_id').querySelector('.text').innerText : '';
+
+                // 抓取封面圖網址 (供檔案重新命名功能使用)
+                var coverUrl = '';
+                var coverEl = document.getElementById('video_jacket_img');
+                if (coverEl && coverEl.src) {
+                    coverUrl = coverEl.src;
+                }
+
                 // 抓取演員 (修正: 增強版遍歷邏輯, 處理各種別名排版)
                 var actors = [];
                 var castEl = document.getElementById('video_cast');
@@ -129,7 +204,7 @@ async function extractJavDataFromWindow(win) {
                     for (var i = 0; i < stars.length; i++) {
                         var star = stars[i];
                         var actorName = star.innerText.trim();
-                        
+
                         // 往後搜尋兄弟節點, 找尋括號內容
                         var nextNode = star.nextSibling;
                         while(nextNode) {
@@ -170,7 +245,9 @@ async function extractJavDataFromWindow(win) {
                         director: director.trim(),
                         maker: maker.trim(),
                         publisher: publisher.trim(),
-                        actors: actors
+                        actors: actors,
+                        video_id: videoId.trim(),
+                        cover_url: coverUrl.trim()
                     }
                 };
             })();
@@ -291,4 +368,4 @@ function ScraperModal({ defaultUrl, onConfirm, onClose }) {
         </div>`;
 }
 
-module.exports = { ScraperModal };
+module.exports = { ScraperModal, openJavScraperWindow, extractJavDataFromWindow, DESKTOP_USER_AGENT };

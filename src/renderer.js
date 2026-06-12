@@ -7,7 +7,7 @@ const ReactDOM = require('react-dom/client');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const {
-    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText
+    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog
 } = require('lucide-react');
 
 const { fullTitle } = require('./version');
@@ -21,6 +21,7 @@ const {
 } = require('./components/WorkSystem');
 const { TagSystem } = require('./components/TagSystem');
 const { ActorSystem } = require('./components/ActorSystem');
+const { FileOrganizerSystem } = require('./components/FileOrganizer');
 
 // 9. 主程式進入點 (App & Main)
 
@@ -277,6 +278,7 @@ function App() {
                     <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
                     <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
                     <button className="nav-btn ${activeTab === 'actors' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('actors')}><${Users} size=${16} /> 演員資料庫</button>
+                    <button className="nav-btn ${activeTab === 'fileOrganizer' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('fileOrganizer')}><${FolderCog} size=${16} /> 影片整理</button>
                 </div>
                 ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
             </div>
@@ -328,7 +330,7 @@ function App() {
                             </div>
                         </div>
                     </div>`
-        ) : activeTab === 'tags' ? html`<${TagSystem} />` : html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />`}
+        ) : activeTab === 'tags' ? html`<${TagSystem} />` : activeTab === 'actors' ? html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />` : html`<${FileOrganizerSystem} />`}
             </div>
         </div>`;
 }
