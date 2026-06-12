@@ -284,7 +284,7 @@ function App() {
                 </div>
                 ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
             </div>
-            <div style=${{ flex: 1, overflow: 'hidden' }}>
+            <div style=${{ flex: 1, overflow: 'hidden', display: ['works', 'tags', 'actors'].includes(activeTab) ? 'block' : 'none' }}>
                 ${activeTab === 'works' ? (
             viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => setViewMode('list')} onSaveSuccess=${() => { setViewMode('list'); loadWorks(); }} />` :
                 viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} 
@@ -332,7 +332,13 @@ function App() {
                             </div>
                         </div>
                     </div>`
-        ) : activeTab === 'tags' ? html`<${TagSystem} />` : activeTab === 'actors' ? html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />` : activeTab === 'fileOrganizer' ? html`<${FileOrganizerSystem} />` : html`<${VideoImportSystem} />`}
+        ) : activeTab === 'tags' ? html`<${TagSystem} />` : activeTab === 'actors' ? html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />` : null}
+            </div>
+            <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'fileOrganizer' ? 'block' : 'none' }}>
+                <${FileOrganizerSystem} />
+            </div>
+            <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'videoImport' ? 'block' : 'none' }}>
+                <${VideoImportSystem} />
             </div>
         </div>`;
 }
