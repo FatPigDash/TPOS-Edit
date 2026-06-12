@@ -10,6 +10,7 @@ const {
     XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderInput, ImageIcon
 } = require('lucide-react');
 const { openJavScraperWindow, extractJavDataFromWindow } = require('./Scraper');
+const { useColumnWidths, ColumnResizeHandle } = require('./Shared');
 const { db, worksImgDir } = require('../utils/db');
 const { getOrCreateActorId } = require('../utils/helpers');
 
@@ -111,6 +112,8 @@ function VideoImportSystem() {
     const [folderPath, setFolderPath] = React.useState('');
     const [items, setItems] = React.useState([]);
     const [isRunning, setIsRunning] = React.useState(false);
+
+    const { widths: colWidths, startResize } = useColumnWidths('videoImport.colWidths', [100, 280, 110, 110, 100, 250]);
 
     const itemsRef = React.useRef([]);
     const indexRef = React.useRef(-1);
@@ -545,15 +548,18 @@ function VideoImportSystem() {
                         作品名稱 [識別碼] / 作品名稱 [識別碼]-uncensored-leak / 作品名稱 [識別碼]-chinese-subtitle
                     </div>
                 ` : html`
-                    <table style=${{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                    <table style=${{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', tableLayout: 'fixed' }}>
+                        <colgroup>
+                            ${colWidths.map((w, i) => html`<col key=${i} style=${{ width: `${w}px` }} />`)}
+                        </colgroup>
                         <thead>
                             <tr style=${{ textAlign: 'left', borderBottom: '2px solid #eee', position: 'sticky', top: 0, backgroundColor: '#fff' }}>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>狀態</th>
-                                <th style=${{ padding: '8px' }}>作品名稱</th>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>識別碼</th>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>類型</th>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>檔案</th>
-                                <th style=${{ padding: '8px' }}>結果 / 訊息</th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>狀態<${ColumnResizeHandle} onMouseDown=${startResize(0)} /></th>
+                                <th style=${{ padding: '8px', position: 'relative' }}>作品名稱<${ColumnResizeHandle} onMouseDown=${startResize(1)} /></th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>識別碼<${ColumnResizeHandle} onMouseDown=${startResize(2)} /></th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>類型<${ColumnResizeHandle} onMouseDown=${startResize(3)} /></th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>檔案<${ColumnResizeHandle} onMouseDown=${startResize(4)} /></th>
+                                <th style=${{ padding: '8px', position: 'relative' }}>結果 / 訊息</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -562,15 +568,15 @@ function VideoImportSystem() {
         const Icon = meta.icon;
         return html`
                                     <tr key=${it.id} style=${{ borderBottom: '1px solid #f5f5f5', backgroundColor: it.status === 'processing' ? '#e3f2fd' : 'transparent' }}>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap' }}>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             <span style=${{ display: 'flex', alignItems: 'center', gap: '6px', color: meta.color, fontWeight: 'bold' }}>
                                                 <${Icon} size=${16} className=${meta.spin ? 'spin-anim' : ''} /> ${meta.label}
                                             </span>
                                         </td>
                                         <td style=${{ padding: '8px', wordBreak: 'break-all' }}>${it.title || '-'}</td>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', fontWeight: 'bold' }}>${it.code || '-'}</td>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap' }}>${TYPE_LABELS[it.type] || '-'}</td>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', color: '#666' }}>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis' }}>${it.code || '-'}</td>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${TYPE_LABELS[it.type] || '-'}</td>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             <span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '10px' }}><${FileVideo} size=${14} /> ${it.videos.length}</span>
                                             <span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><${ImageIcon} size=${14} /> ${it.images.length}</span>
                                         </td>

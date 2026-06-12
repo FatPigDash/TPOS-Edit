@@ -89,6 +89,66 @@ function CodeSearchHelpText() {
     return html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '4px', lineHeight: 1.4 }}>說明: 空格分段, | = OR<br />開頭「-」= NOT, 開頭「+」= AND (字串內「-」視為文字)</div>`;
 }
 
+// 表格欄寬可調整功能
+// key: localStorage 儲存鍵值, defaults: 預設寬度陣列 (px)
+function useColumnWidths(key, defaults) {
+    const [widths, setWidths] = React.useState(() => {
+        try {
+            const saved = localStorage.getItem(key);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed) && parsed.length === defaults.length) return parsed;
+            }
+        } catch (e) { }
+        return defaults;
+    });
+
+    const widthsRef = React.useRef(widths);
+    widthsRef.current = widths;
+
+    const startResize = (index) => (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startWidth = widthsRef.current[index];
+
+        const onMove = (ev) => {
+            const newWidth = Math.max(40, Math.round(startWidth + (ev.clientX - startX)));
+            setWidths(prev => {
+                if (prev[index] === newWidth) return prev;
+                const next = [...prev];
+                next[index] = newWidth;
+                return next;
+            });
+        };
+
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            try { localStorage.setItem(key, JSON.stringify(widthsRef.current)); } catch (e) { }
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+
+    return { widths, startResize };
+}
+
+// 欄位拖曳調整把手 (放置於 <th> 右側邊緣)
+function ColumnResizeHandle({ onMouseDown }) {
+    return html`
+        <span
+            onMouseDown=${onMouseDown}
+            onClick=${stopPropagation}
+            style=${{
+        position: 'absolute', top: 0, right: -3, bottom: 0, width: '6px',
+        cursor: 'col-resize', userSelect: 'none', zIndex: 2
+    }}
+        ></span>
+    `;
+}
+
 function Pagination({ currentPage, totalPages, onPageChange }) {
     if (totalPages <= 1) return null;
     let startPage = Math.max(1, currentPage - 4);
@@ -137,5 +197,7 @@ module.exports = {
     LoadingOverlay,
     SearchHelpText,
     CodeSearchHelpText,
-    Pagination
+    Pagination,
+    useColumnWidths,
+    ColumnResizeHandle
 };

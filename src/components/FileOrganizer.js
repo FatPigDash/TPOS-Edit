@@ -12,6 +12,7 @@ const {
     XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderCog
 } = require('lucide-react');
 const { openJavScraperWindow, extractJavDataFromWindow, DESKTOP_USER_AGENT } = require('./Scraper');
+const { useColumnWidths, ColumnResizeHandle } = require('./Shared');
 
 // 影片整理模組 (File Organizer)
 // 支援的影片副檔名
@@ -180,6 +181,8 @@ function FileOrganizerSystem() {
     const [folderPath, setFolderPath] = React.useState('');
     const [items, setItems] = React.useState([]);
     const [isRunning, setIsRunning] = React.useState(false);
+
+    const { widths: colWidths, startResize } = useColumnWidths('fileOrganizer.colWidths', [100, 320, 110, 110, 300]);
 
     const itemsRef = React.useRef([]);
     const indexRef = React.useRef(-1);
@@ -547,14 +550,17 @@ function FileOrganizerSystem() {
                         支援的檔名格式: 識別碼 / 識別碼-uncensored-leak / 識別碼-chinese-subtitle
                     </div>
                 ` : html`
-                    <table style=${{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                    <table style=${{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', tableLayout: 'fixed' }}>
+                        <colgroup>
+                            ${colWidths.map((w, i) => html`<col key=${i} style=${{ width: `${w}px` }} />`)}
+                        </colgroup>
                         <thead>
                             <tr style=${{ textAlign: 'left', borderBottom: '2px solid #eee', position: 'sticky', top: 0, backgroundColor: '#fff' }}>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>狀態</th>
-                                <th style=${{ padding: '8px' }}>原始檔名</th>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>識別碼</th>
-                                <th style=${{ padding: '8px', whiteSpace: 'nowrap' }}>類型</th>
-                                <th style=${{ padding: '8px' }}>結果 / 訊息</th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>狀態<${ColumnResizeHandle} onMouseDown=${startResize(0)} /></th>
+                                <th style=${{ padding: '8px', position: 'relative' }}>原始檔名<${ColumnResizeHandle} onMouseDown=${startResize(1)} /></th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>識別碼<${ColumnResizeHandle} onMouseDown=${startResize(2)} /></th>
+                                <th style=${{ padding: '8px', whiteSpace: 'nowrap', position: 'relative' }}>類型<${ColumnResizeHandle} onMouseDown=${startResize(3)} /></th>
+                                <th style=${{ padding: '8px', position: 'relative' }}>結果 / 訊息</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -563,14 +569,14 @@ function FileOrganizerSystem() {
         const Icon = meta.icon;
         return html`
                                     <tr key=${it.id} style=${{ borderBottom: '1px solid #f5f5f5', backgroundColor: it.status === 'processing' ? '#e3f2fd' : 'transparent' }}>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap' }}>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             <span style=${{ display: 'flex', alignItems: 'center', gap: '6px', color: meta.color, fontWeight: 'bold' }}>
                                                 <${Icon} size=${16} className=${meta.spin ? 'spin-anim' : ''} /> ${meta.label}
                                             </span>
                                         </td>
                                         <td style=${{ padding: '8px', wordBreak: 'break-all' }}>${it.fileName}</td>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', fontWeight: 'bold' }}>${it.code || '-'}</td>
-                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap' }}>${TYPE_LABELS[it.type] || '-'}</td>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis' }}>${it.code || '-'}</td>
+                                        <td style=${{ padding: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${TYPE_LABELS[it.type] || '-'}</td>
                                         <td style=${{ padding: '8px', wordBreak: 'break-all', color: it.status === 'error' ? '#dc3545' : '#333' }}>
                                             ${(it.status === 'done' || it.status === 'multiple' || it.status === 'notfound') ? `${it.message || ''}${it.newName ? ' -> ' + it.newName : ''}` : (it.message || '')}
                                         </td>
