@@ -47,6 +47,16 @@ function App() {
     const [totalPages, setTotalPages] = React.useState(1);
     const [isLoading, setIsLoading] = React.useState(false);
 
+    // 記住作品列表的捲動位置，返回列表時還原 (避免每次都跳回頂部)
+    const listContentRef = React.useRef(null);
+    const listScrollPosRef = React.useRef(0);
+
+    React.useLayoutEffect(() => {
+        if (viewMode === 'list' && listContentRef.current) {
+            listContentRef.current.scrollTop = listScrollPosRef.current;
+        }
+    }, [viewMode]);
+
     const loadWorks = () => {
         if (!db) return;
         setIsLoading(true);
@@ -296,7 +306,7 @@ function App() {
                             onEdit=${(id) => { setSelectedWorkId(id); setViewMode('edit'); }} />` :
                     html`<div className="main-layout">
                         ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />`}
-                        <div className="content-area">
+                        <div className="content-area" ref=${listContentRef} onScroll=${e => { listScrollPosRef.current = e.target.scrollTop; }}>
                             <div className="content-header" style=${{ alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', height: 'auto', minHeight: '60px', padding: '16px 20px' }}>
                                 <div style=${{ display: 'flex', alignItems: 'flex-start', flex: 1, minWidth: '300px' }}>
                                     <button className="btn-ghost" onClick=${() => setIsSidebarOpen(!isSidebarOpen)} title=${isSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '12px', marginTop: '2px' }}>
