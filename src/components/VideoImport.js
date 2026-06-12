@@ -160,17 +160,22 @@ function VideoImportSystem() {
                 const parsed = parseGroupFileName(base);
                 if (!parsed) return; // 檔名格式不符者忽略
 
-                if (!groupsMap.has(base)) {
-                    groupsMap.set(base, { base, title: parsed.title, code: parsed.code, type: parsed.type, videos: [], images: [] });
-                    order.push(base);
+                // 以解析後的「作品名稱+識別碼+類型」(正規化後) 作為分組依據,
+                // 避免影片檔與圖片檔在 [識別碼] 前的空白字元或 Unicode 正規化形式
+                // 不同, 導致原始檔名字串不完全相同而被誤判為不同組
+                const groupKey = `${parsed.title.normalize('NFC')}|||${parsed.code.normalize('NFC')}|||${parsed.type}`;
+
+                if (!groupsMap.has(groupKey)) {
+                    groupsMap.set(groupKey, { base, title: parsed.title, code: parsed.code, type: parsed.type, videos: [], images: [] });
+                    order.push(groupKey);
                 }
-                const grp = groupsMap.get(base);
+                const grp = groupsMap.get(groupKey);
                 if (isVideo) grp.videos.push(fileName);
                 else grp.images.push(fileName);
             });
 
-            const newItems = order.map((base, idx) => {
-                const g = groupsMap.get(base);
+            const newItems = order.map((groupKey, idx) => {
+                const g = groupsMap.get(groupKey);
                 const hasVideo = g.videos.length > 0;
                 const hasImage = g.images.length > 0;
                 const isComplete = hasVideo && hasImage;
