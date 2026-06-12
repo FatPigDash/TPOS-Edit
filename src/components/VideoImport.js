@@ -45,7 +45,7 @@ const STATUS_META = {
     done: { label: '匯入成功', color: '#28a745', icon: CheckCircle2, spin: false },
     error: { label: '錯誤', color: '#dc3545', icon: XCircle, spin: false },
     skipped: { label: '已跳過', color: '#999', icon: SkipForward, spin: false },
-    unsupported: { label: '格式不符', color: '#ff9800', icon: AlertTriangle, spin: false },
+    unsupported: { label: '不完整(已跳過)', color: '#ff9800', icon: AlertTriangle, spin: false },
     multiple: { label: '已放棄(複數結果)', color: '#ff9800', icon: AlertTriangle, spin: false },
     notfound: { label: '已放棄(找不到)', color: '#dc3545', icon: XCircle, spin: false },
     duplicate: { label: '已放棄(重複建立)', color: '#ff9800', icon: AlertTriangle, spin: false }
@@ -172,6 +172,12 @@ function VideoImportSystem() {
             const newItems = order.map((base, idx) => {
                 const g = groupsMap.get(base);
                 const hasVideo = g.videos.length > 0;
+                const hasImage = g.images.length > 0;
+                const isComplete = hasVideo && hasImage;
+                let message = '';
+                if (!hasVideo && !hasImage) message = '此組沒有影片與圖片檔案, 無法匯入';
+                else if (!hasVideo) message = '此組缺少影片檔案, 不是完整一組, 已跳過';
+                else if (!hasImage) message = '此組缺少圖片檔案, 不是完整一組, 已跳過';
                 return {
                     id: `${Date.now()}_${idx}`,
                     base: g.base,
@@ -180,8 +186,8 @@ function VideoImportSystem() {
                     type: g.type,
                     videos: g.videos,
                     images: g.images,
-                    status: hasVideo ? 'pending' : 'unsupported',
-                    message: hasVideo ? '' : '此組沒有影片檔案, 無法匯入',
+                    status: isComplete ? 'pending' : 'unsupported',
+                    message,
                     workNumber: ''
                 };
             });
@@ -491,7 +497,7 @@ function VideoImportSystem() {
     };
 
     const totalProcessable = items.filter(it => it.status !== 'unsupported').length;
-    const doneCount = items.filter(it => ['done', 'skipped', 'error', 'multiple', 'notfound'].includes(it.status)).length;
+    const doneCount = items.filter(it => ['done', 'skipped', 'error', 'multiple', 'notfound', 'duplicate'].includes(it.status)).length;
 
     return html`
         <div className="content-area" style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -536,6 +542,8 @@ function VideoImportSystem() {
                         說明: 開始處理後會開啟右側瀏覽器視窗並前往 javlibrary 搜尋。系統會自動偵測搜尋結果並繼續:<br/>
                         ・找到單一作品 -> 自動新增作品、填入資訊、加入影片與圖片、選取「${TAG_NOT_WATCHED}」標籤並儲存, 然後將該組檔案移至「${FOLDER_SUCCESS}」資料夾<br/>
                         ・搜尋到多個結果或完全找不到結果 -> 放棄該組作品的新增, 檔案保留原位<br/>
+                        ・識別碼已存在作品卡片 -> 放棄該組新增, 並將檔案移至「${FOLDER_DUPLICATE}」資料夾<br/>
+                        ・只有影片或只有圖片 (非完整一組) -> 自動跳過, 不進行匯入<br/>
                         若遇到 Cloudflare 驗證畫面，請先手動完成驗證，系統會自動繼續。
                     </div>
                 `}
