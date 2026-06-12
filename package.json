@@ -1,10 +1,13 @@
 {
   "name": "tpos-app",
-  "version": "1.1.0",
+  "version": "3.0.1",
   "description": "The Pile of Shame Application",
   "main": "src/main.js",
   "scripts": {
+    "sync-config": "node scripts/sync-config.js",
+    "prestart": "node scripts/sync-config.js",
     "start": "electron .",
+    "prebuild": "node scripts/sync-config.js",
     "build": "electron-builder && powershell -Command \"Remove-Item -Recurse -Force dist\\win-unpacked -ErrorAction SilentlyContinue\"",
     "postinstall": "electron-builder install-app-deps",
     "rebuild": "electron-rebuild -f -w better-sqlite3"

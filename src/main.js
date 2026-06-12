@@ -12,6 +12,7 @@ const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static');
+const { fullTitle } = require('./version');
 
 // 設定 ffmpeg 與 ffprobe 執行檔路徑
 // replace 是為了處理 Electron 打包後(asar)的路徑問題
@@ -68,7 +69,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: "The Pile of Shame (V1.3.3)", // 更新標題
+    title: fullTitle, // 軟體名稱與版次集中於 app.config.json / src/version.js
     icon: path.join(__dirname, '../assets/icon.ico'),
     autoHideMenuBar: false,
     webPreferences: {
