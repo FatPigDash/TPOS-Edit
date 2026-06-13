@@ -124,11 +124,8 @@ function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFav
             <div className="card-info">
                 <div className="card-title" title=${actor.name} onClick=${() => onOpenDetail(actor.id)} style=${{ cursor: 'pointer' }}>${actor.name}</div>
                 ${actor.aliases && html`<div style=${{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>(${actor.aliases})</div>`}
-                <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px', marginTop: '4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px', marginTop: '4px' }}>
                     <span>作品: ${actor.work_count || 0}部</span>
-                    <button className="btn-ghost" title="搜尋此演員作品" style=${{ padding: '2px 4px', height: 'auto', display: 'flex', alignItems: 'center' }} onClick=${(e) => { e.stopPropagation(); onSearch(actor); }}>
-                        <${Search} size=${14} color="#007bff" />
-                    </button>
                 </div>
                 <div style=${{ marginTop: '4px', cursor: 'pointer', display: 'inline-block' }} onClick=${(e) => { e.stopPropagation(); onToggleFavorite(actor.id, actor.is_favorite); }}>
                     <${Star} size=${16} fill=${actor.is_favorite ? "#fbc02d" : "none"} color=${actor.is_favorite ? "#fbc02d" : "#ccc"} />
@@ -1090,7 +1087,7 @@ function ActorSystem({
             ${scrapeProgress && html`<${ScrapeProgressModal} progress=${scrapeProgress}
                 onStop=${() => { scrapeCancelRef.current = true; }}
                 onClose=${() => setScrapeProgress(null)} />`}
-            ${showFailures && html`<${ScrapeFailuresModal} onClose=${() => setShowFailures(false)} />`}
+            ${showFailures && html`<${ScrapeFailuresModal} onClose=${() => setShowFailures(false)} onUpdated=${loadActors} />`}
         </div>`;
 }
 
@@ -1187,9 +1184,13 @@ function ScrapeProgressModal({ progress, onStop, onClose }) {
 }
 
 // 已保存的失敗清單視窗 (從 localStorage 讀取)
-function ScrapeFailuresModal({ onClose }) {
+function ScrapeFailuresModal({ onClose, onUpdated }) {
     const [data, setData] = React.useState({ time: null, items: [] });
     const [copied, setCopied] = React.useState(false);
+    const [scanning, setScanning] = React.useState(false);
+    const [scanProgress, setScanProgress] = React.useState(null); // null | { current, total, name }
+    const [lastRemoved, setLastRemoved] = React.useState(null); // null | number
+    const cancelRef = React.useRef(false);
 
     React.useEffect(() => {
         try {
@@ -1212,6 +1213,59 @@ function ScrapeFailuresModal({ onClose }) {
         if (!confirm('確定要清除已保存的失敗清單嗎?')) return;
         try { localStorage.removeItem('actorScrapeFailures'); } catch (e) { }
         setData({ time: null, items: [] });
+        setLastRemoved(null);
+    };
+
+    // 重新掃描失敗項目: 重抓一次, 成功者自清單移除, 仍失敗者保留
+    const handleRescan = async () => {
+        if (scanning || !db || data.items.length === 0) return;
+        if (!confirm('將重新抓取清單中的 ' + data.items.length + ' 位演員, 已成功的會自動從清單移除。\n\n為避免被封鎖會稍作延遲, 確定要開始嗎?')) return;
+
+        setScanning(true);
+        setLastRemoved(null);
+        cancelRef.current = false;
+        const items = data.items;
+        const stillFail = [];
+
+        for (let i = 0; i < items.length; i++) {
+            if (cancelRef.current) {
+                // 中止: 將尚未掃描的項目原樣保留
+                for (let j = i; j < items.length; j++) stillFail.push(items[j]);
+                break;
+            }
+            const item = items[i];
+            setScanProgress({ current: i + 1, total: items.length, name: item.name });
+
+            let actor = null;
+            try {
+                if (item.actor_number) actor = db.prepare("SELECT * FROM actors WHERE actor_number = ? AND is_deleted = 0").get(item.actor_number);
+                if (!actor && item.name) actor = db.prepare("SELECT * FROM actors WHERE name = ? AND is_deleted = 0").get(item.name);
+            } catch (e) { }
+
+            // 演員已不存在 (例如已刪除) -> 視為移除
+            if (!actor) continue;
+
+            let reason = '';
+            try {
+                const r = await scrapeAndUpdateActor(actor);
+                if (r.status !== 'updated') reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗');
+            } catch (e) { reason = e.message || '例外錯誤'; }
+
+            if (reason) stillFail.push({ actor_number: item.actor_number, name: actor.name || item.name, reason });
+
+            if (i < items.length - 1 && !cancelRef.current) {
+                await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
+            }
+        }
+
+        const removed = items.length - stillFail.length;
+        const newData = { time: Date.now(), items: stillFail };
+        try { localStorage.setItem('actorScrapeFailures', JSON.stringify(newData)); } catch (e) { }
+        setData(newData);
+        setScanProgress(null);
+        setScanning(false);
+        setLastRemoved(removed);
+        if (removed > 0 && onUpdated) onUpdated();
     };
 
     return html`
@@ -1221,18 +1275,43 @@ function ScrapeFailuresModal({ onClose }) {
                     <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <${AlertTriangle} size=${20} color="#dc3545" /> 抓取失敗清單
                     </span>
-                    <button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>
+                    ${!scanning && html`<button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>`}
                 </div>
                 <div className="modal-body" style=${{ padding: '16px 0' }}>
                     <div style=${{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
-                        ${data.time ? '最後一次批量抓取: ' + new Date(data.time).toLocaleString() : '尚無保存的失敗紀錄'}
+                        ${data.time ? '最後更新: ' + new Date(data.time).toLocaleString() : '尚無保存的失敗紀錄'}
                         ${data.items.length > 0 ? html`　(共 ${data.items.length} 位)` : ''}
                     </div>
+                    ${scanning && scanProgress && html`
+                        <div style=${{ marginBottom: '10px' }}>
+                            <div style=${{ fontSize: '13px', color: '#2196F3', fontWeight: 'bold', marginBottom: '6px' }}>
+                                重新掃描中 (${scanProgress.current} / ${scanProgress.total})
+                            </div>
+                            <div style=${{ height: '10px', background: '#eee', borderRadius: '5px', overflow: 'hidden' }}>
+                                <div style=${{ width: Math.round((scanProgress.current / scanProgress.total) * 100) + '%', height: '100%', background: '#2196F3', transition: 'width 0.3s' }}></div>
+                            </div>
+                            <div style=${{ fontSize: '12px', color: '#666', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>正在抓取: ${scanProgress.name || '...'}</div>
+                        </div>
+                    `}
+                    ${!scanning && lastRemoved !== null && html`
+                        <div style=${{ marginBottom: '10px', fontSize: '13px', color: lastRemoved > 0 ? '#28a745' : '#666', fontWeight: 'bold' }}>
+                            ${lastRemoved > 0 ? '已移除 ' + lastRemoved + ' 位成功抓取的演員。' : '本次掃描沒有新增成功的項目。'}
+                        </div>
+                    `}
                     <${FailureList} items=${data.items} />
                 </div>
-                <div className="modal-footer" style=${{ justifyContent: 'space-between' }}>
-                    <button className="btn-block" onClick=${handleClear} disabled=${data.items.length === 0}>清除紀錄</button>
-                    <button className="btn-primary" onClick=${handleCopy} disabled=${data.items.length === 0}>${copied ? '已複製!' : '複製清單'}</button>
+                <div className="modal-footer" style=${{ justifyContent: 'space-between', gap: '8px' }}>
+                    ${scanning
+                        ? html`<button className="btn-block" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${() => { cancelRef.current = true; }}><${StopCircle} size=${16} /> 中止掃描</button>`
+                        : html`
+                            <button className="btn-block" onClick=${handleClear} disabled=${data.items.length === 0}>清除紀錄</button>
+                            <div style=${{ display: 'flex', gap: '8px' }}>
+                                <button className="btn-block" onClick=${handleCopy} disabled=${data.items.length === 0}>${copied ? '已複製!' : '複製清單'}</button>
+                                <button className="btn-primary" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${handleRescan} disabled=${data.items.length === 0}>
+                                    <${RefreshCw} size=${16} /> 重新掃描
+                                </button>
+                            </div>
+                        `}
                 </div>
             </div>
         </div>`;
