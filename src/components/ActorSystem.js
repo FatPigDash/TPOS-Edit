@@ -19,7 +19,7 @@ const {
     ConfirmModal, Modal, ImageViewerModal, Pagination, SearchHelpText
 } = require('./Shared');
 const { WorkCard } = require('./WorkSystem');
-const { scrapeActorByName, downloadImage, guessImageExt } = require('./ActorScraper');
+const { scrapeActorByName, downloadImage, guessImageExt, cleanSearchName } = require('./ActorScraper');
 
 // 抓取單一演員資訊並寫入資料庫 (供批量與單張按鈕共用)
 // 回傳 { status: 'updated' | 'notfound' | 'error', message?, imageUpdated? }
@@ -45,8 +45,11 @@ async function scrapeAndUpdateActor(actor) {
         // タグ: 直接以抓取結果覆蓋 (去重)
         const tagsStr = [...new Set((d.tags || []).map(t => (t || '').trim()).filter(s => s))].join(',');
 
-        db.prepare('UPDATE actors SET aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ? WHERE id = ?')
-            .run(aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, actor.id);
+        // 名稱: 移除括號內的別名 (別名已存於別名欄位); 若清理後為空則保留原名
+        const cleanedName = cleanSearchName(actor.name) || actor.name;
+
+        db.prepare('UPDATE actors SET name = ?, aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ? WHERE id = ?')
+            .run(cleanedName, aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, actor.id);
 
         // 圖片: 僅在原本沒有圖片時才下載
         let imageUpdated = false;
@@ -690,7 +693,8 @@ function ActorSystem({
     const [viewingImage, setViewingImage] = React.useState(null);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
-    const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled }
+    const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled, failures }
+    const [showFailures, setShowFailures] = React.useState(false);
     const scrapeCancelRef = React.useRef(false);
 
     const loadActors = () => {
@@ -909,24 +913,33 @@ function ActorSystem({
 
         scrapeCancelRef.current = false;
         let ok = 0, fail = 0;
-        setScrapeProgress({ total: rows.length, current: 0, name: '', ok, fail, done: false });
+        const failures = [];
+        setScrapeProgress({ total: rows.length, current: 0, name: '', ok, fail, done: false, failures: [] });
 
         for (let i = 0; i < rows.length; i++) {
             if (scrapeCancelRef.current) break;
             const actor = rows[i];
-            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false });
+            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false, failures });
+            let reason = '';
             try {
                 const r = await scrapeAndUpdateActor(actor);
-                if (r.status === 'updated') ok++; else fail++;
-            } catch (e) { fail++; }
-            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false });
+                if (r.status === 'updated') ok++;
+                else { fail++; reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗'); }
+            } catch (e) { fail++; reason = e.message || '例外錯誤'; }
+            if (reason) failures.push({ actor_number: actor.actor_number, name: actor.name, reason });
+            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false, failures });
             // 隨機延遲 1.5~3.5 秒, 降低被判定為爬蟲的機率
             if (i < rows.length - 1 && !scrapeCancelRef.current) {
                 await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
             }
         }
 
-        setScrapeProgress({ total: rows.length, current: rows.length, name: '', ok, fail, done: true, cancelled: scrapeCancelRef.current });
+        // 保留失敗清單 (存入 localStorage, 重開軟體仍可查看)
+        try {
+            localStorage.setItem('actorScrapeFailures', JSON.stringify({ time: Date.now(), items: failures }));
+        } catch (e) { }
+
+        setScrapeProgress({ total: rows.length, current: rows.length, name: '', ok, fail, done: true, cancelled: scrapeCancelRef.current, failures });
         loadActors();
     };
 
@@ -1010,6 +1023,9 @@ function ActorSystem({
                         <button className="btn-block" onClick=${handleBatchScrape} disabled=${viewMode === 'duplicates' || !!scrapeProgress} title="從 minnano-av 批量抓取所有演員資訊" style=${{ display: 'flex', alignItems: 'center' }}>
                             <${Globe} size=${16} style=${{ marginRight: 4 }} /> 批量抓取資訊
                         </button>
+                        <button className="btn-block" onClick=${() => setShowFailures(true)} title="查看上次批量抓取的失敗清單" style=${{ display: 'flex', alignItems: 'center' }}>
+                            <${AlertTriangle} size=${16} style=${{ marginRight: 4 }} /> 失敗清單
+                        </button>
                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => { pushHistory && pushHistory(); setSortOrder(e.target.value); }} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
@@ -1047,16 +1063,64 @@ function ActorSystem({
             ${scrapeProgress && html`<${ScrapeProgressModal} progress=${scrapeProgress}
                 onStop=${() => { scrapeCancelRef.current = true; }}
                 onClose=${() => setScrapeProgress(null)} />`}
+            ${showFailures && html`<${ScrapeFailuresModal} onClose=${() => setShowFailures(false)} />`}
+        </div>`;
+}
+
+// 將失敗清單組成可複製的純文字
+function formatFailuresText(items, time) {
+    const header = '抓取失敗清單' + (time ? ' (' + new Date(time).toLocaleString() + ')' : '') + '\n共 ' + items.length + ' 位\n';
+    const body = items.map((f, i) => `${i + 1}. ${f.actor_number || ''} ${f.name}　-　${f.reason || ''}`).join('\n');
+    return header + '\n' + body;
+}
+
+// 複製失敗清單到剪貼簿
+function copyFailuresToClipboard(items, time) {
+    const text = formatFailuresText(items, time);
+    try {
+        const { clipboard } = require('electron');
+        clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        try { navigator.clipboard.writeText(text); return true; } catch (e2) { return false; }
+    }
+}
+
+// 失敗清單呈現 (供進度視窗與獨立視窗共用)
+function FailureList({ items }) {
+    if (!items || items.length === 0) {
+        return html`<div style=${{ color: '#28a745', padding: '12px 0' }}>沒有失敗的項目 🎉</div>`;
+    }
+    return html`
+        <div style=${{ maxHeight: '260px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '6px' }}>
+            ${items.map((f, i) => html`
+                <div key=${i} style=${{ padding: '8px 12px', borderBottom: i < items.length - 1 ? '1px solid #f2f2f2' : 'none', fontSize: '13px' }}>
+                    <div style=${{ fontWeight: 'bold' }}>${f.actor_number ? f.actor_number + ' ' : ''}${f.name}</div>
+                    <div style=${{ color: '#dc3545', fontSize: '12px', marginTop: '2px' }}>${f.reason || '失敗'}</div>
+                </div>
+            `)}
         </div>`;
 }
 
 // 批量抓取進度視窗
 function ScrapeProgressModal({ progress, onStop, onClose }) {
     const { total, current, name, ok, fail, done, cancelled } = progress;
+    const failures = progress.failures || [];
     const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+    const [copied, setCopied] = React.useState(false);
+
+    const handleCopy = () => {
+        if (copyFailuresToClipboard(failures, Date.now())) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } else {
+            alert('複製失敗, 請手動選取。');
+        }
+    };
+
     return html`
         <div className="modal-overlay" style=${{ zIndex: 2300 }}>
-            <div className="modal-content" style=${{ maxWidth: '480px' }} onClick=${stopPropagation}>
+            <div className="modal-content" style=${{ maxWidth: '520px' }} onClick=${stopPropagation}>
                 <div className="modal-header">
                     <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <${Globe} size=${20} color="#2196F3" /> 批量抓取演員資訊
@@ -1073,15 +1137,75 @@ function ScrapeProgressModal({ progress, onStop, onClose }) {
                         <div style=${{ width: pct + '%', height: '100%', background: done ? '#28a745' : '#2196F3', transition: 'width 0.3s' }}></div>
                     </div>
                     ${!done && html`<div style=${{ fontSize: '13px', color: '#666', marginBottom: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>正在抓取: ${name || '...'}</div>`}
-                    <div style=${{ display: 'flex', gap: '16px', fontSize: '14px' }}>
+                    <div style=${{ display: 'flex', gap: '16px', fontSize: '14px', marginBottom: done ? '12px' : 0 }}>
                         <span style=${{ color: '#28a745' }}>成功更新: ${ok}</span>
                         <span style=${{ color: '#dc3545' }}>未更新/失敗: ${fail}</span>
                     </div>
+                    ${done && html`
+                        <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <div style=${{ fontWeight: 'bold', fontSize: '14px' }}>失敗清單</div>
+                            ${failures.length > 0 && html`<button className="btn-block" style=${{ padding: '4px 10px', fontSize: '13px' }} onClick=${handleCopy}>${copied ? '已複製!' : '複製清單'}</button>`}
+                        </div>
+                        <${FailureList} items=${failures} />
+                        ${failures.length > 0 && html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '8px' }}>此清單已自動保存, 可於演員資料庫上方「失敗清單」按鈕再次查看。</div>`}
+                    `}
                 </div>
                 <div className="modal-footer">
                     ${done
                         ? html`<button className="btn-primary" onClick=${onClose}>關閉</button>`
                         : html`<button className="btn-block" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${onStop}><${StopCircle} size=${16} /> 中止</button>`}
+                </div>
+            </div>
+        </div>`;
+}
+
+// 已保存的失敗清單視窗 (從 localStorage 讀取)
+function ScrapeFailuresModal({ onClose }) {
+    const [data, setData] = React.useState({ time: null, items: [] });
+    const [copied, setCopied] = React.useState(false);
+
+    React.useEffect(() => {
+        try {
+            const raw = localStorage.getItem('actorScrapeFailures');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                setData({ time: parsed.time || null, items: parsed.items || [] });
+            }
+        } catch (e) { }
+    }, []);
+
+    const handleCopy = () => {
+        if (copyFailuresToClipboard(data.items, data.time)) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } else { alert('複製失敗, 請手動選取。'); }
+    };
+
+    const handleClear = () => {
+        if (!confirm('確定要清除已保存的失敗清單嗎?')) return;
+        try { localStorage.removeItem('actorScrapeFailures'); } catch (e) { }
+        setData({ time: null, items: [] });
+    };
+
+    return html`
+        <div className="modal-overlay" style=${{ zIndex: 2300 }}>
+            <div className="modal-content" style=${{ maxWidth: '520px' }} onClick=${stopPropagation}>
+                <div className="modal-header">
+                    <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <${AlertTriangle} size=${20} color="#dc3545" /> 抓取失敗清單
+                    </span>
+                    <button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>
+                </div>
+                <div className="modal-body" style=${{ padding: '16px 0' }}>
+                    <div style=${{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
+                        ${data.time ? '最後一次批量抓取: ' + new Date(data.time).toLocaleString() : '尚無保存的失敗紀錄'}
+                        ${data.items.length > 0 ? html`　(共 ${data.items.length} 位)` : ''}
+                    </div>
+                    <${FailureList} items=${data.items} />
+                </div>
+                <div className="modal-footer" style=${{ justifyContent: 'space-between' }}>
+                    <button className="btn-block" onClick=${handleClear} disabled=${data.items.length === 0}>清除紀錄</button>
+                    <button className="btn-primary" onClick=${handleCopy} disabled=${data.items.length === 0}>${copied ? '已複製!' : '複製清單'}</button>
                 </div>
             </div>
         </div>`;
