@@ -846,6 +846,20 @@ function ActorSystem({
                     }
                     if (appliedFilters.noImage) conditions.push("(image_path IS NULL OR image_path = '')");
                     if (appliedFilters.isFavorite) conditions.push("is_favorite = 1");
+                    if (appliedFilters.scrapeFailed) {
+                        // 依保存的失敗清單 (localStorage) 篩出抓取失敗的演員
+                        let failNums = [];
+                        try {
+                            const raw = localStorage.getItem('actorScrapeFailures');
+                            if (raw) failNums = (JSON.parse(raw).items || []).map(it => it.actor_number).filter(Boolean);
+                        } catch (e) { }
+                        if (failNums.length === 0) {
+                            conditions.push('1 = 0'); // 無失敗紀錄 -> 無符合結果
+                        } else {
+                            conditions.push(`actor_number IN (${failNums.map(() => '?').join(',')})`);
+                            params.push(...failNums);
+                        }
+                    }
 
                     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
                     const total = db.prepare(`SELECT COUNT(*) as count FROM actors ${whereClause}`).get(...params).count;
@@ -899,7 +913,7 @@ function ActorSystem({
 
     const handleClear = () => {
         pushHistory && pushHistory();
-        const empty = { name: '', code: '', noImage: false, isFavorite: false };
+        const empty = { name: '', code: '', noImage: false, isFavorite: false, scrapeFailed: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
         setViewMode('normal');
@@ -908,7 +922,7 @@ function ActorSystem({
     const handleFindDuplicates = () => {
         pushHistory && pushHistory();
         // 清除其他篩選條件，專注於顯示重複項
-        const empty = { name: '', code: '', noImage: false, isFavorite: false };
+        const empty = { name: '', code: '', noImage: false, isFavorite: false, scrapeFailed: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
         setViewMode('duplicates');
@@ -1065,6 +1079,12 @@ function ActorSystem({
                         尚缺圖片
                     </label>
                 </div>
+                <div className="filter-group">
+                    <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="checkbox" checked=${uiFilters.scrapeFailed} onChange=${e => setUiFilters({ ...uiFilters, scrapeFailed: e.target.checked })} style=${{ marginRight: 8 }} disabled=${viewMode === 'duplicates'} />
+                        資料抓取失敗
+                    </label>
+                </div>
                 <div className="sidebar-actions">
                     <button className="btn-block" style=${{ flex: 1 }} onClick=${handleApply} disabled=${viewMode === 'duplicates'}>套用篩選</button>
                     <button className="btn-block" style=${{ flex: 1 }} onClick=${handleClear}>清除篩選</button>
@@ -1096,7 +1116,7 @@ function ActorSystem({
                     <div style=${{ fontSize: '12px', color: '#666' }}>
                         ${viewMode === 'duplicates' 
                             ? html`模式: 潛在重複分析 (依名稱排序)` 
-                            : html`條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.noImage || appliedFilters.isFavorite ? '篩選中' : '所有演員'}`
+                            : html`條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.noImage || appliedFilters.isFavorite || appliedFilters.scrapeFailed ? '篩選中' : '所有演員'}`
                         }
                     </div>
                     <div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}>

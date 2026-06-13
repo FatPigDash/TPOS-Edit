@@ -48,8 +48,8 @@ function App() {
     const [isLoading, setIsLoading] = React.useState(false);
 
     // 演員資料庫狀態 (提升至 App 層級，以便導覽歷史可以記錄/還原)
-    const [actorUiFilters, setActorUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
-    const [actorAppliedFilters, setActorAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
+    const [actorUiFilters, setActorUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false, scrapeFailed: false });
+    const [actorAppliedFilters, setActorAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false, scrapeFailed: false });
     const [actorSortOrder, setActorSortOrder] = React.useState('number_desc');
     const [actorViewMode, setActorViewMode] = React.useState('normal'); // 'normal' | 'duplicates'
     const [actorCurrentPage, setActorCurrentPage] = React.useState(1);
