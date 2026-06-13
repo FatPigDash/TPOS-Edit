@@ -136,35 +136,47 @@ async function openJavScraperWindow(keyword) {
                     if (window.location.href.indexOf('vl_searchbyid.php') !== -1) {
                         var videoItems = document.querySelectorAll('#videothumblist .video, .videothumblist .video');
                         if (videoItems.length > 0) {
-                            // 特殊情況: 剛好兩個搜尋結果, 且識別碼皆與搜尋條件相同、封面圖也相同
-                            // -> 視為同一作品, 自動選擇第一個結果繼續匯入
                             var autoSelected = false;
-                            if (videoItems.length === 2) {
-                                var searchKeyword = '';
-                                try {
-                                    searchKeyword = (new URLSearchParams(window.location.search).get('keyword') || '').trim().toUpperCase();
-                                } catch (e) { }
+                            var searchKeyword = '';
+                            try {
+                                searchKeyword = (new URLSearchParams(window.location.search).get('keyword') || '').trim().toUpperCase();
+                            } catch (e) { }
 
-                                if (searchKeyword) {
-                                    var ids = [];
-                                    var covers = [];
-                                    var links = [];
-                                    for (var vi = 0; vi < videoItems.length; vi++) {
-                                        var idEl = videoItems[vi].querySelector('.id');
-                                        var imgEl = videoItems[vi].querySelector('img');
-                                        var linkEl = videoItems[vi].querySelector('a');
-                                        ids.push(idEl ? idEl.innerText.trim().toUpperCase() : '');
-                                        covers.push(imgEl ? imgEl.src : '');
-                                        links.push(linkEl ? linkEl.href : '');
-                                    }
-                                    var idsMatchKeyword = ids[0] === searchKeyword && ids[1] === searchKeyword;
-                                    var coversMatch = !!covers[0] && covers[0] === covers[1];
-                                    if (idsMatchKeyword && coversMatch && links[0]) {
-                                        console.log("TPOS: Two identical results detected, auto-selecting first one.");
-                                        autoSelected = true;
-                                        clearInterval(window.__tposCheckInterval);
-                                        window.location.href = links[0];
-                                    }
+                            if (searchKeyword) {
+                                var ids = [];
+                                var covers = [];
+                                var links = [];
+                                for (var vi = 0; vi < videoItems.length; vi++) {
+                                    var idEl = videoItems[vi].querySelector('.id');
+                                    var imgEl = videoItems[vi].querySelector('img');
+                                    var linkEl = videoItems[vi].querySelector('a');
+                                    ids.push(idEl ? idEl.innerText.trim().toUpperCase() : '');
+                                    covers.push(imgEl ? imgEl.src : '');
+                                    links.push(linkEl ? linkEl.href : '');
+                                }
+
+                                var matchIndexes = [];
+                                for (var mi = 0; mi < ids.length; mi++) {
+                                    if (ids[mi] === searchKeyword) matchIndexes.push(mi);
+                                }
+
+                                var targetLink = '';
+                                // 條件 1: 剛好兩個搜尋結果, 且識別碼皆與搜尋條件相同、封面圖也相同
+                                // -> 視為同一作品, 自動選擇第一個結果繼續匯入
+                                if (videoItems.length === 2 && matchIndexes.length === 2 &&
+                                    !!covers[0] && covers[0] === covers[1] && links[0]) {
+                                    console.log("TPOS: Two identical results detected, auto-selecting first one.");
+                                    targetLink = links[0];
+                                } else if (matchIndexes.length === 1 && links[matchIndexes[0]]) {
+                                    // 條件 2: 僅有一個結果的識別碼與搜尋條件相同 -> 自動選擇該結果繼續匯入
+                                    console.log("TPOS: Exactly one result matches the search keyword, auto-selecting it.");
+                                    targetLink = links[matchIndexes[0]];
+                                }
+
+                                if (targetLink) {
+                                    autoSelected = true;
+                                    clearInterval(window.__tposCheckInterval);
+                                    window.location.href = targetLink;
                                 }
                             }
 
