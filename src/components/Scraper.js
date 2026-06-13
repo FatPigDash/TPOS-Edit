@@ -139,38 +139,125 @@ async function openJavScraperWindow(keyword) {
                             var autoSelected = false;
                             var searchKeyword = '';
                             try {
-                                searchKeyword = (new URLSearchParams(window.location.search).get('keyword') || '').trim().toUpperCase();
+                                searchKeyword = (new URLSearchParams(window.location.search).get('keyword') || '').trim();
                             } catch (e) { }
 
+                            // 正規化識別碼: 轉大寫並移除所有非英數字元 (例如 "SONE-632" -> "SONE632"),
+                            // 避免因連字號/空格等排版差異造成比對失敗
+                            var normalizeId = function (s) {
+                                return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            };
+                            // 注意: 此字串為 executeJavaScript 的樣板字面值 (template literal),
+                            // 樣板字面值會吃掉正則中的 \s \d 反斜線而使其失效 (\s->s, \d->d)。
+                            // 為徹底避開此陷阱, 改用字元集 [ ] [0-9] 表示空白與數字, 完全不使用反斜線簡寫。
+                            var idPattern = /[A-Za-z]{2,10}-?[ ]?[0-9]{2,6}/;
+
+                            // 從卡片中盡可能找出識別碼文字: 依序嘗試 .id 元素文字、
+                            // 卡片內整段文字、圖片 alt、連結 title/href 等來源
+                            var extractIdText = function (item) {
+                                var idEl = item.querySelector('.id');
+                                if (idEl) {
+                                    var t = (idEl.innerText || '').trim();
+                                    if (idPattern.test(t)) return t;
+                                }
+                                var sources = [item.innerText || ''];
+                                var imgAltEl = item.querySelector('img[alt]');
+                                if (imgAltEl) sources.push(imgAltEl.getAttribute('alt') || '');
+                                var linkTitleEl = item.querySelector('a[title]');
+                                if (linkTitleEl) sources.push(linkTitleEl.getAttribute('title') || '');
+                                var linkHrefEl = item.querySelector('a[href]');
+                                if (linkHrefEl) sources.push(linkHrefEl.getAttribute('href') || '');
+                                for (var si = 0; si < sources.length; si++) {
+                                    var m = sources[si].match(idPattern);
+                                    if (m) return m[0];
+                                }
+                                return '';
+                            };
+
+                            // 取得封面圖網址: 優先採用 lazyload 屬性中的真實網址, 略過 data: 佔位圖,
+                            // 最後再以瀏覽器解析後的 .src 屬性作為備援
+                            var pickCoverUrl = function (imgEl) {
+                                if (!imgEl) return '';
+                                var candidates = [
+                                    imgEl.getAttribute('data-src'),
+                                    imgEl.getAttribute('data-original'),
+                                    imgEl.getAttribute('data-thumb'),
+                                    imgEl.getAttribute('data-lazy'),
+                                    imgEl.getAttribute('src'),
+                                    imgEl.src
+                                ];
+                                for (var ci = 0; ci < candidates.length; ci++) {
+                                    var u = (candidates[ci] || '').trim();
+                                    if (u && u.toLowerCase().indexOf('data:') !== 0) return u;
+                                }
+                                return '';
+                            };
+
+                            // 正規化封面圖網址以利比對: 去除協定 (http/https/協定相對 //)、查詢字串與錨點,
+                            // 僅保留小寫的圖片檔名 (例如 "https://pics.dmm.co.jp/.../sone00353ps.jpg?t=1"
+                            // 與 "//pics.dmm.co.jp/.../sone00353ps.jpg" 皆正規化為 "sone00353ps.jpg"),
+                            // 避免因協定差異、lazyload 載入狀態或快取參數造成相同封面被誤判為不同
+                            var normalizeCover = function (u) {
+                                u = (u || '').trim();
+                                if (!u) return '';
+                                u = u.split('?')[0].split('#')[0];
+                                u = u.replace(/^https?:/i, '').replace(/^\\/\\//, '');
+                                var parts = u.split('/');
+                                var fn = (parts[parts.length - 1] || '').toLowerCase();
+                                // 移除 DMM 封面檔名開頭的變體前綴數字 (例如 "9sone561ps.jpg" -> "sone561ps.jpg"),
+                                // 同一作品因重複上架常會被加上不同數字前綴, 去除後才能正確判定為相同封面
+                                fn = fn.replace(/^[0-9]+/, '');
+                                return fn;
+                            };
+
                             if (searchKeyword) {
+                                var normKeyword = normalizeId(searchKeyword);
                                 var ids = [];
                                 var covers = [];
                                 var links = [];
+                                var rawIds = [];
+                                var rawCovers = [];
                                 for (var vi = 0; vi < videoItems.length; vi++) {
-                                    var idEl = videoItems[vi].querySelector('.id');
-                                    var imgEl = videoItems[vi].querySelector('img');
-                                    var linkEl = videoItems[vi].querySelector('a');
-                                    ids.push(idEl ? idEl.innerText.trim().toUpperCase() : '');
-                                    covers.push(imgEl ? imgEl.src : '');
+                                    var item = videoItems[vi];
+
+                                    var __idRaw = extractIdText(item);
+                                    ids.push(normalizeId(__idRaw));
+                                    rawIds.push(__idRaw);
+
+                                    // 封面圖: 部分版面採用延遲載入 (lazyload), 取得真實網址後正規化為檔名以利比對
+                                    var imgEl = item.querySelector('img');
+                                    var __coverRaw = pickCoverUrl(imgEl);
+                                    covers.push(normalizeCover(__coverRaw));
+                                    rawCovers.push(__coverRaw);
+
+                                    // 連結: 取得卡片中第一個有 href 的連結 (通常為作品詳情頁連結)
+                                    var linkEl = item.querySelector('a[href]');
                                     links.push(linkEl ? linkEl.href : '');
                                 }
 
+                                // 找出識別碼與搜尋條件相符的項目 (不限定總結果數量,
+                                // 避免頁面上其他推薦/相關影片區塊也符合 .video 選擇器而影響判斷)
                                 var matchIndexes = [];
                                 for (var mi = 0; mi < ids.length; mi++) {
-                                    if (ids[mi] === searchKeyword) matchIndexes.push(mi);
+                                    if (ids[mi] && ids[mi] === normKeyword) matchIndexes.push(mi);
                                 }
 
                                 var targetLink = '';
-                                // 條件 1: 剛好兩個搜尋結果, 且識別碼皆與搜尋條件相同、封面圖也相同
-                                // -> 視為同一作品, 自動選擇第一個結果繼續匯入
-                                if (videoItems.length === 2 && matchIndexes.length === 2 &&
-                                    !!covers[0] && covers[0] === covers[1] && links[0]) {
-                                    console.log("TPOS: Two identical results detected, auto-selecting first one.");
-                                    targetLink = links[0];
-                                } else if (matchIndexes.length === 1 && links[matchIndexes[0]]) {
+                                if (matchIndexes.length === 1 && links[matchIndexes[0]]) {
                                     // 條件 2: 僅有一個結果的識別碼與搜尋條件相同 -> 自動選擇該結果繼續匯入
                                     console.log("TPOS: Exactly one result matches the search keyword, auto-selecting it.");
                                     targetLink = links[matchIndexes[0]];
+                                } else if (matchIndexes.length === 2) {
+                                    // 條件 1: 剛好兩個結果的識別碼與搜尋條件相同, 且封面圖 (正規化後檔名) 也相同
+                                    // -> 視為同一作品, 自動選擇第一個結果繼續匯入
+                                    var c0 = covers[matchIndexes[0]];
+                                    var c1 = covers[matchIndexes[1]];
+                                    if (!!c0 && c0 === c1 && links[matchIndexes[0]]) {
+                                        console.log("TPOS: Two identical results detected (cover '" + c0 + "'), auto-selecting first one.");
+                                        targetLink = links[matchIndexes[0]];
+                                    } else {
+                                        console.log("TPOS: Two ID matches but covers differ ('" + c0 + "' vs '" + c1 + "'), not auto-selecting.");
+                                    }
                                 }
 
                                 if (targetLink) {
@@ -181,9 +268,26 @@ async function openJavScraperWindow(keyword) {
                             }
 
                             if (!autoSelected) {
-                                console.log("TPOS: Multiple results detected.");
-                                document.title = 'TPOS_MULTIPLE_RESULTS';
-                                clearInterval(window.__tposCheckInterval);
+                                // 重試緩衝: 首次輪詢時封面圖 (lazyload) 或識別碼節點可能尚未就緒,
+                                // 若立即判定「複數結果」會造成本應自動選取的項目被誤放棄。
+                                // 因此先給予數次重試機會, 待頁面穩定後再做最終判定。
+                                window.__tposResultChecks = (window.__tposResultChecks || 0) + 1;
+                                if (window.__tposResultChecks >= 4) {
+                                    // [診斷] 即將判定為複數結果而放棄 -> 在頁面顯示實際抓到的資料供回報
+                                    try {
+                                        var __dbg = 'keyword=' + searchKeyword + '  norm=' + normKeyword + '  count=' + videoItems.length + '  matchIndexes=' + JSON.stringify(matchIndexes);
+                                        for (var __di = 0; __di < ids.length; __di++) {
+                                            __dbg += '    ||  [' + __di + '] idRaw="' + rawIds[__di] + '"  idNorm="' + ids[__di] + '"  coverNorm="' + covers[__di] + '"  coverRaw="' + rawCovers[__di] + '"';
+                                        }
+                                        // 放棄原因僅記錄到 console (開啟 DevTools 可查), 不在頁面上顯示面板
+                                        console.log('TPOS_DEBUG  ' + __dbg);
+                                    } catch (__e) { console.log('TPOS_DEBUG error', __e); }
+                                    console.log("TPOS: Multiple results detected (after retries).");
+                                    document.title = 'TPOS_MULTIPLE_RESULTS';
+                                    clearInterval(window.__tposCheckInterval);
+                                } else {
+                                    console.log("TPOS: No auto-select yet, retrying... (" + window.__tposResultChecks + ")");
+                                }
                             }
                         } else {
                             console.log("TPOS: No results found.");
