@@ -695,7 +695,15 @@ function ActorSystem({
     const [totalPages, setTotalPages] = React.useState(1);
     const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled, failures }
     const [showFailures, setShowFailures] = React.useState(false);
+    const [showScrapeMenu, setShowScrapeMenu] = React.useState(false);
     const scrapeCancelRef = React.useRef(false);
+    const scrapeMenuRef = React.useRef(null);
+
+    React.useEffect(() => {
+        const handler = (e) => { if (scrapeMenuRef.current && !scrapeMenuRef.current.contains(e.target)) setShowScrapeMenu(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
 
     const loadActors = () => {
         if (!db) return;
@@ -901,15 +909,20 @@ function ActorSystem({
     };
 
     // 批量抓取所有演員資訊 (minnano-av)
-    const handleBatchScrape = async () => {
+    const handleBatchScrape = async (onlyMissing = false) => {
         if (!db || scrapeProgress) return;
-        if (!confirm('將連線到 minnano-av.com 逐一抓取所有演員的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
+        const scopeText = onlyMissing ? '尚未有資訊的演員' : '所有演員';
+        if (!confirm('將連線到 minnano-av.com 逐一抓取' + scopeText + '的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間/タグ 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
 
         let rows;
         try {
-            rows = db.prepare('SELECT * FROM actors WHERE is_deleted = 0 ORDER BY actor_number ASC').all();
+            // 「尚未有資訊」: 生年月日/サイズ/AV出演期間/讀音 皆為空的演員
+            const missingClause = onlyMissing
+                ? " AND (birthdate IS NULL OR birthdate = '') AND (sizes IS NULL OR sizes = '') AND (av_period IS NULL OR av_period = '') AND (name_reading IS NULL OR name_reading = '')"
+                : '';
+            rows = db.prepare("SELECT * FROM actors WHERE is_deleted = 0" + missingClause + " ORDER BY actor_number ASC").all();
         } catch (e) { alert('讀取演員清單失敗: ' + e.message); return; }
-        if (!rows.length) { alert('沒有可抓取的演員。'); return; }
+        if (!rows.length) { alert(onlyMissing ? '沒有「尚未有資訊」的演員需要抓取。' : '沒有可抓取的演員。'); return; }
 
         scrapeCancelRef.current = false;
         let ok = 0, fail = 0;
@@ -1020,9 +1033,23 @@ function ActorSystem({
                             </button>
                         `}
                         <button className="btn-primary" onClick=${() => { setEditingActorId(null); setIsModalOpen(true); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增演員</button>
-                        <button className="btn-block" onClick=${handleBatchScrape} disabled=${viewMode === 'duplicates' || !!scrapeProgress} title="從 minnano-av 批量抓取所有演員資訊" style=${{ display: 'flex', alignItems: 'center' }}>
-                            <${Globe} size=${16} style=${{ marginRight: 4 }} /> 批量抓取資訊
-                        </button>
+                        <div ref=${scrapeMenuRef} style=${{ position: 'relative' }}>
+                            <button className="btn-block" onClick=${() => setShowScrapeMenu(s => !s)} disabled=${viewMode === 'duplicates' || !!scrapeProgress} title="從 minnano-av 抓取演員資訊" style=${{ display: 'flex', alignItems: 'center' }}>
+                                <${Globe} size=${16} style=${{ marginRight: 4 }} /> 抓取資訊
+                            </button>
+                            ${showScrapeMenu && html`
+                                <div style=${{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', boxShadow: '0 2px 10px rgba(0,0,0,0.12)', zIndex: 30, minWidth: '240px', overflow: 'hidden' }}>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape(false); }}>
+                                        批量抓取 (所有演員)
+                                    </div>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape(true); }}>
+                                        只抓尚未有資訊的演員
+                                    </div>
+                                </div>
+                            `}
+                        </div>
                         <button className="btn-block" onClick=${() => setShowFailures(true)} title="查看上次批量抓取的失敗清單" style=${{ display: 'flex', alignItems: 'center' }}>
                             <${AlertTriangle} size=${16} style=${{ marginRight: 4 }} /> 失敗清單
                         </button>
