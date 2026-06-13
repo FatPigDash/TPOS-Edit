@@ -79,7 +79,7 @@ function pickActressFromResults(htmlBody, name) {
     try {
         const doc = new DOMParser().parseFromString(htmlBody, 'text/html');
         const anchors = Array.from(doc.querySelectorAll('a[href]'))
-            .filter(a => /\/actress\d+\.html/.test(a.getAttribute('href') || ''));
+            .filter(a => /actress\d+\.html/.test(a.getAttribute('href') || ''));
         // 優先: 連結文字與搜尋名稱完全相符
         for (const a of anchors) {
             const t = (a.textContent || '').trim();
@@ -120,6 +120,89 @@ async function findActress(rawName) {
         }
     }
     return null;
+}
+
+// 解析搜尋結果頁的候選演員清單
+// 優先回傳「搜尋結果卡片」(卡片內含「デビュー」可排除側欄推薦); 若過濾後為空則回傳全部不重複的演員連結作為後備
+function parseSearchCandidates(htmlBody) {
+    let doc;
+    try { doc = new DOMParser().parseFromString(htmlBody, 'text/html'); } catch (e) { return []; }
+    const anchors = Array.from(doc.querySelectorAll('a[href]'));
+    const seen = new Set();
+    const strong = [];
+    const all = [];
+    for (const a of anchors) {
+        const href = a.getAttribute('href') || '';
+        // 相容相對/絕對網址與 actress_id 形式
+        const m = href.match(/actress(\d+)\.html/) || href.match(/actress_id=(\d+)/);
+        if (!m) continue;
+        const id = m[1];
+        if (seen.has(id)) continue;
+
+        // 向上尋找包含「デビュー」的卡片容器 (搜尋結果卡片才有)
+        let card = a, hops = 0, hasDebut = false;
+        while (card && hops < 6) {
+            if ((card.textContent || '').indexOf('デビュー') !== -1) { hasDebut = true; break; }
+            card = card.parentElement; hops++;
+        }
+        const container = (hasDebut && card) ? card : (a.parentElement || a);
+
+        let name = (a.textContent || '').trim();
+        let thumb = '';
+        const img = (container.querySelector && container.querySelector('img')) || (a.querySelector && a.querySelector('img'));
+        if (img) {
+            if (!name) name = (img.getAttribute('alt') || img.getAttribute('title') || '').split(',')[0].trim();
+            // 優先取 lazyload 的真實網址, 略過 data: 佔位圖與 blank/np 佔位檔
+            const srcCands = [img.getAttribute('data-original'), img.getAttribute('data-src'), img.getAttribute('data-lazy'), img.getAttribute('src')];
+            for (const u of srcCands) {
+                const v = (u || '').trim();
+                if (v && v.toLowerCase().indexOf('data:') !== 0 && v.indexOf('blank') === -1 && v.indexOf('np.gif') === -1) { thumb = v; break; }
+            }
+            // 相對網址補成絕對網址
+            if (thumb) { try { thumb = new URL(thumb, BASE).toString(); } catch (e) { } }
+        }
+        let info = (container.textContent || '').replace(/\s+/g, ' ').trim();
+        if (info.length > 90) info = info.slice(0, 90);
+
+        let url;
+        try { url = new URL(href, BASE).toString(); } catch (e) { url = href; }
+
+        const cand = { id, name: name || ('actress' + id), url, thumb, info };
+        seen.add(id);
+        all.push(cand);
+        if (hasDebut) strong.push(cand);
+    }
+    return strong.length > 0 ? strong : all;
+}
+
+// 查詢演員: 回傳 single(已含頁面) / multiple(候選清單) / none
+async function lookupActress(rawName) {
+    const name = cleanSearchName(rawName);
+    if (!name) return { type: 'none' };
+    const queries = [name];
+    if (/\s/.test(name)) queries.push(name.replace(/\s+/g, ''));
+
+    for (const q of queries) {
+        const searchUrl = BASE + '/search_result.php?search_scope=actress&search_word=' + encodeURIComponent(q);
+        let resp;
+        try { resp = await fetchPage(searchUrl); } catch (e) { continue; }
+
+        if (/\/actress\d+\.html/.test(resp.finalUrl) || /actress_id=\d+/.test(resp.finalUrl)) {
+            return { type: 'single', url: resp.finalUrl, body: resp.body };
+        }
+        const candidates = parseSearchCandidates(resp.body);
+        if (candidates.length === 1) {
+            try { const r2 = await fetchPage(candidates[0].url); return { type: 'single', url: r2.finalUrl, body: r2.body }; } catch (e) { }
+        }
+        if (candidates.length > 1) return { type: 'multiple', candidates };
+    }
+    return { type: 'none' };
+}
+
+// 依指定演員頁網址抓取並解析
+async function scrapeActressUrl(url) {
+    const r = await fetchPage(url);
+    return { success: true, data: parseProfile(r.body), sourceUrl: r.finalUrl };
 }
 
 // 掃描個人檔案表格, 收集 (label, value) 配對 (相容單欄式與雙欄式表格)
@@ -283,6 +366,9 @@ function guessImageExt(url) {
 
 module.exports = {
     scrapeActorByName,
+    lookupActress,
+    scrapeActressUrl,
+    parseSearchCandidates,
     downloadImage,
     guessImageExt,
     fetchPage,

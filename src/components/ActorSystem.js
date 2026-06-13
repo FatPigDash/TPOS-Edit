@@ -19,20 +19,11 @@ const {
     ConfirmModal, Modal, ImageViewerModal, Pagination, SearchHelpText
 } = require('./Shared');
 const { WorkCard } = require('./WorkSystem');
-const { scrapeActorByName, downloadImage, guessImageExt, cleanSearchName } = require('./ActorScraper');
+const { scrapeActorByName, lookupActress, scrapeActressUrl, parseProfile, downloadImage, guessImageExt, cleanSearchName } = require('./ActorScraper');
 
-// 抓取單一演員資訊並寫入資料庫 (供批量與單張按鈕共用)
-// 回傳 { status: 'updated' | 'notfound' | 'error', message?, imageUpdated? }
-async function scrapeAndUpdateActor(actor) {
-    let res;
-    try {
-        res = await scrapeActorByName(actor.name);
-    } catch (e) {
-        return { status: 'error', message: e.message };
-    }
-    if (!res.success) return { status: 'notfound', message: res.message };
-
-    const d = res.data;
+// 將抓取到的資料寫入資料庫 (供自動與手動選擇共用)
+// 回傳 { status: 'updated', imageUpdated } 或 { status: 'error', message }
+async function applyScrapedData(actor, d) {
     try {
         // 別名: 直接以抓取結果覆蓋舊資料 (避免新舊格式造成重複), 並去除重複
         const aliasesStr = [...new Set((d.aliases || []).map(a => (a || '').trim()).filter(s => s))].join(',');
@@ -67,6 +58,19 @@ async function scrapeAndUpdateActor(actor) {
     } catch (e) {
         return { status: 'error', message: e.message };
     }
+}
+
+// 自動抓取並寫入 (供批量抓取與失敗清單重新掃描使用; 多筆結果時自動比對/略過, 不互動)
+// 回傳 { status: 'updated' | 'notfound' | 'error', message?, imageUpdated? }
+async function scrapeAndUpdateActor(actor) {
+    let res;
+    try {
+        res = await scrapeActorByName(actor.name);
+    } catch (e) {
+        return { status: 'error', message: e.message };
+    }
+    if (!res.success) return { status: 'notfound', message: res.message };
+    return applyScrapedData(actor, res.data);
 }
 
 // 6. 演員系統元件 (Actor System)
@@ -506,6 +510,15 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     const [viewingImage, setViewingImage] = React.useState(null);
     const [imageError, setImageError] = React.useState(false);
     const [scraping, setScraping] = React.useState(false);
+    const [editing, setEditing] = React.useState(false);
+    const [candidates, setCandidates] = React.useState(null); // null | [{id,name,url,thumb,info}]
+
+    const reloadActor = () => {
+        try {
+            const a = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId);
+            if (a) { setActor(a); setImageError(false); }
+        } catch (e) { console.error(e); }
+    };
 
     React.useEffect(() => {
         if (!db || !actorId) return;
@@ -517,21 +530,37 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         setPage(1);
     }, [actorId]);
 
-    // 抓取此演員資訊 (minnano-av)
+    // 抓取此演員資訊 (minnano-av); 多筆候選時讓使用者選擇
     const handleScrapeThis = async () => {
         if (!actor || scraping) return;
         setScraping(true);
         try {
-            const r = await scrapeAndUpdateActor(actor);
-            if (r.status === 'updated') {
-                const a = db.prepare('SELECT * FROM actors WHERE id = ?').get(actor.id);
-                setActor(a);
-                setImageError(false);
-            } else if (r.status === 'notfound') {
-                alert(r.message || '找不到此演員的資料');
-            } else {
-                alert('抓取失敗: ' + (r.message || '未知錯誤'));
+            const res = await lookupActress(actor.name);
+            if (res.type === 'none') {
+                alert('在 minnano-av 找不到此演員的資料。');
+            } else if (res.type === 'single') {
+                const r = await applyScrapedData(actor, parseProfile(res.body));
+                if (r.status === 'updated') reloadActor();
+                else alert('抓取失敗: ' + (r.message || '未知錯誤'));
+            } else if (res.type === 'multiple') {
+                setCandidates(res.candidates);
             }
+        } catch (e) {
+            alert('抓取失敗: ' + e.message);
+        }
+        setScraping(false);
+    };
+
+    // 使用者從候選清單選定一位後抓取
+    const handlePickCandidate = async (c) => {
+        setCandidates(null);
+        if (!actor) return;
+        setScraping(true);
+        try {
+            const r = await scrapeActressUrl(c.url);
+            const applied = await applyScrapedData(actor, r.data);
+            if (applied.status === 'updated') reloadActor();
+            else alert('抓取失敗: ' + (applied.message || '未知錯誤'));
         } catch (e) {
             alert('抓取失敗: ' + e.message);
         }
@@ -605,6 +634,10 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                                 ? html`<${Loader2} size=${15} className="spin-anim" /> 抓取中...`
                                 : html`<${Globe} size=${15} /> 抓取資訊`}
                         </button>
+                        <button className="btn-block" onClick=${() => setEditing(true)} disabled=${scraping} title="編輯此演員的個人檔案"
+                            style=${{ marginLeft: '8px', padding: '4px 12px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <${Edit} size=${15} /> 編輯
+                        </button>
                     </div>
                 </div>
 
@@ -666,6 +699,50 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                 </div>
             </div>
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
+            ${editing && html`<${ActorEditModal} actorId=${actorId} setIsLoading=${setIsLoading} onClose=${() => setEditing(false)} onSaveSuccess=${reloadActor} />`}
+            ${candidates && html`<${ScrapeCandidateModal} actorName=${actor.name} candidates=${candidates} onPick=${handlePickCandidate} onClose=${() => setCandidates(null)} />`}
+        </div>`;
+}
+
+// 抓取候選清單選擇視窗 (搜尋結果多筆時, 讓使用者挑選正確的演員)
+function ScrapeCandidateModal({ actorName, candidates, onPick, onClose }) {
+    const fixThumb = (u) => u ? (u.startsWith('//') ? 'https:' + u : u) : '';
+    return html`
+        <div className="modal-overlay" style=${{ zIndex: 2400 }}>
+            <div className="modal-content" style=${{ maxWidth: '640px' }} onClick=${stopPropagation}>
+                <div className="modal-header">
+                    <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <${Globe} size=${20} color="#2196F3" /> 選擇要抓取的演員
+                    </span>
+                    <button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>
+                </div>
+                <div className="modal-body" style=${{ padding: '12px 0' }}>
+                    <div style=${{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
+                        「${actorName}」找到 ${candidates.length} 位候選, 請點選正確的一位:
+                    </div>
+                    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
+                        ${candidates.map(c => html`
+                            <div key=${c.id} onClick=${() => onPick(c)} title="選擇此演員"
+                                style=${{ border: '1px solid #eee', borderRadius: '8px', padding: '8px', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center', transition: 'background 0.15s' }}
+                                onMouseOver=${(e) => e.currentTarget.style.background = '#f5f9ff'}
+                                onMouseOut=${(e) => e.currentTarget.style.background = '#fff'}>
+                                <div style=${{ width: '52px', height: '52px', flexShrink: 0, borderRadius: '6px', overflow: 'hidden', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    ${c.thumb
+                                        ? html`<img src=${fixThumb(c.thumb)} style=${{ width: '100%', height: '100%', objectFit: 'cover' }} onError=${(e) => { e.target.style.display = 'none'; }} />`
+                                        : html`<${Users} size=${24} color="#ccc" />`}
+                                </div>
+                                <div style=${{ minWidth: 0 }}>
+                                    <div style=${{ fontWeight: 'bold', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>${c.name}</div>
+                                    <div style=${{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>${c.info}</div>
+                                </div>
+                            </div>
+                        `)}
+                    </div>
+                </div>
+                <div className="modal-footer">
+                    <button className="btn-block" onClick=${onClose}>取消</button>
+                </div>
+            </div>
         </div>`;
 }
 
@@ -936,7 +1013,7 @@ function ActorSystem({
                 if (r.status === 'updated') ok++;
                 else { fail++; reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗'); }
             } catch (e) { fail++; reason = e.message || '例外錯誤'; }
-            if (reason) failures.push({ actor_number: actor.actor_number, name: actor.name, reason });
+            if (reason) failures.push({ actor_number: actor.actor_number, name: actor.name, reason, is_favorite: actor.is_favorite ? 1 : 0 });
             setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false, failures });
             // 隨機延遲 1.5~3.5 秒, 降低被判定為爬蟲的機率
             if (i < rows.length - 1 && !scrapeCancelRef.current) {
@@ -1091,11 +1168,13 @@ function ActorSystem({
         </div>`;
 }
 
-// 將失敗清單組成可複製的純文字
+// 將失敗清單組成可複製的純文字 (分關注演員 / 其他)
 function formatFailuresText(items, time) {
-    const header = '抓取失敗清單' + (time ? ' (' + new Date(time).toLocaleString() + ')' : '') + '\n共 ' + items.length + ' 位\n';
-    const body = items.map((f, i) => `${i + 1}. ${f.actor_number || ''} ${f.name}　-　${f.reason || ''}`).join('\n');
-    return header + '\n' + body;
+    const favs = items.filter(f => f.is_favorite);
+    const others = items.filter(f => !f.is_favorite);
+    const fmt = (list) => list.length ? list.map((f, i) => `${i + 1}. ${f.actor_number || ''} ${f.name}　-　${f.reason || ''}`).join('\n') : '（無）';
+    const header = '抓取失敗清單' + (time ? ' (' + new Date(time).toLocaleString() + ')' : '') + '\n共 ' + items.length + ' 位';
+    return header + '\n\n【關注演員】(' + favs.length + ')\n' + fmt(favs) + '\n\n【其他】(' + others.length + ')\n' + fmt(others);
 }
 
 // 複製失敗清單到剪貼簿
@@ -1110,19 +1189,34 @@ function copyFailuresToClipboard(items, time) {
     }
 }
 
-// 失敗清單呈現 (供進度視窗與獨立視窗共用)
+// 失敗清單呈現 (分「關注演員 / 其他」兩區; 供進度視窗與獨立視窗共用)
 function FailureList({ items }) {
     if (!items || items.length === 0) {
         return html`<div style=${{ color: '#28a745', padding: '12px 0' }}>沒有失敗的項目 🎉</div>`;
     }
+    const favs = items.filter(f => f.is_favorite);
+    const others = items.filter(f => !f.is_favorite);
+
+    const renderItem = (f, i, n) => html`
+        <div key=${i} style=${{ padding: '8px 12px', borderBottom: i < n - 1 ? '1px solid #f2f2f2' : 'none', fontSize: '13px' }}>
+            <div style=${{ fontWeight: 'bold' }}>${f.actor_number ? f.actor_number + ' ' : ''}${f.name}</div>
+            <div style=${{ color: '#dc3545', fontSize: '12px', marginTop: '2px' }}>${f.reason || '失敗'}</div>
+        </div>`;
+
+    const renderSection = (title, list, withStar) => html`
+        <div>
+            <div style=${{ fontSize: '13px', fontWeight: 'bold', color: '#555', padding: '6px 10px', background: '#f5f5f5', display: 'flex', alignItems: 'center', gap: '6px', position: 'sticky', top: 0 }}>
+                ${withStar ? html`<${Star} size=${14} fill="#fbc02d" color="#fbc02d" />` : ''} ${title} (${list.length})
+            </div>
+            ${list.length > 0
+                ? list.map((f, i) => renderItem(f, i, list.length))
+                : html`<div style=${{ padding: '8px 12px', color: '#bbb', fontSize: '12px' }}>（無）</div>`}
+        </div>`;
+
     return html`
-        <div style=${{ maxHeight: '260px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '6px' }}>
-            ${items.map((f, i) => html`
-                <div key=${i} style=${{ padding: '8px 12px', borderBottom: i < items.length - 1 ? '1px solid #f2f2f2' : 'none', fontSize: '13px' }}>
-                    <div style=${{ fontWeight: 'bold' }}>${f.actor_number ? f.actor_number + ' ' : ''}${f.name}</div>
-                    <div style=${{ color: '#dc3545', fontSize: '12px', marginTop: '2px' }}>${f.reason || '失敗'}</div>
-                </div>
-            `)}
+        <div style=${{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '6px' }}>
+            ${renderSection('關注演員', favs, true)}
+            ${renderSection('其他', others, false)}
         </div>`;
 }
 
@@ -1251,7 +1345,7 @@ function ScrapeFailuresModal({ onClose, onUpdated }) {
                 if (r.status !== 'updated') reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗');
             } catch (e) { reason = e.message || '例外錯誤'; }
 
-            if (reason) stillFail.push({ actor_number: item.actor_number, name: actor.name || item.name, reason });
+            if (reason) stillFail.push({ actor_number: item.actor_number, name: actor.name || item.name, reason, is_favorite: actor.is_favorite ? 1 : 0 });
 
             if (i < items.length - 1 && !cancelRef.current) {
                 await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
