@@ -551,6 +551,23 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         setScraping(false);
     };
 
+    // 候選太多時, 用別名等關鍵字重新搜尋網站
+    const handleResearch = async (keyword) => {
+        const kw = (keyword || '').trim();
+        if (!kw) return;
+        const res = await lookupActress(kw);
+        if (res.type === 'none') {
+            alert('找不到「' + kw + '」的資料。');
+        } else if (res.type === 'single') {
+            const r = await applyScrapedData(actor, parseProfile(res.body));
+            setCandidates(null);
+            if (r.status === 'updated') reloadActor();
+            else alert('抓取失敗: ' + (r.message || '未知錯誤'));
+        } else if (res.type === 'multiple') {
+            setCandidates(res.candidates);
+        }
+    };
+
     // 使用者從候選清單選定一位後抓取
     const handlePickCandidate = async (c) => {
         setCandidates(null);
@@ -700,13 +717,27 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
             </div>
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
             ${editing && html`<${ActorEditModal} actorId=${actorId} setIsLoading=${setIsLoading} onClose=${() => setEditing(false)} onSaveSuccess=${reloadActor} />`}
-            ${candidates && html`<${ScrapeCandidateModal} actorName=${actor.name} candidates=${candidates} onPick=${handlePickCandidate} onClose=${() => setCandidates(null)} />`}
+            ${candidates && html`<${ScrapeCandidateModal} actorName=${actor.name} candidates=${candidates} onPick=${handlePickCandidate} onResearch=${handleResearch} onClose=${() => setCandidates(null)} />`}
         </div>`;
 }
 
-// 抓取候選清單選擇視窗 (搜尋結果多筆時, 讓使用者挑選正確的演員)
-function ScrapeCandidateModal({ actorName, candidates, onPick, onClose }) {
+// 抓取候選清單選擇視窗 (搜尋結果多筆時, 讓使用者挑選或用別名重新搜尋)
+function ScrapeCandidateModal({ actorName, candidates, onPick, onResearch, onClose }) {
     const fixThumb = (u) => u ? (u.startsWith('//') ? 'https:' + u : u) : '';
+    const [query, setQuery] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+
+    const q = query.trim().toLowerCase();
+    const filtered = q ? candidates.filter(c => ((c.name || '') + ' ' + (c.info || '')).toLowerCase().indexOf(q) !== -1) : candidates;
+
+    const doResearch = async () => {
+        const kw = query.trim();
+        if (!kw || busy) return;
+        setBusy(true);
+        try { await onResearch(kw); } catch (e) { alert('搜尋失敗: ' + e.message); }
+        setBusy(false);
+    };
+
     return html`
         <div className="modal-overlay" style=${{ zIndex: 2400 }}>
             <div className="modal-content" style=${{ maxWidth: '640px' }} onClick=${stopPropagation}>
@@ -717,11 +748,23 @@ function ScrapeCandidateModal({ actorName, candidates, onPick, onClose }) {
                     <button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>
                 </div>
                 <div className="modal-body" style=${{ padding: '12px 0' }}>
-                    <div style=${{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
-                        「${actorName}」找到 ${candidates.length} 位候選, 請點選正確的一位:
+                    <div style=${{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                        「${actorName}」找到 ${candidates.length} 位候選${q ? `, 篩選後 ${filtered.length} 位` : ''}, 請點選正確的一位:
                     </div>
-                    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
-                        ${candidates.map(c => html`
+                    <div style=${{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                        <input className="filter-input" style=${{ flex: 1 }} value=${query} disabled=${busy}
+                            placeholder="輸入別名或關鍵字篩選 / 重新搜尋 (例如: 香川さくら)"
+                            onInput=${e => setQuery(e.target.value)}
+                            onKeyDown=${e => { if (e.key === 'Enter') doResearch(); }} />
+                        <button className="btn-primary" onClick=${doResearch} disabled=${busy || !query.trim()} style=${{ display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                            ${busy ? html`<${Loader2} size=${15} className="spin-anim" />` : html`<${Search} size=${15} />`} 重新搜尋
+                        </button>
+                    </div>
+                    <div style=${{ fontSize: '12px', color: '#999', marginBottom: '10px' }}>
+                        提示: 上方輸入會即時篩選下方清單; 若找不到, 可按「重新搜尋」用此關鍵字 (例如別名) 重新查詢網站。
+                    </div>
+                    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px', maxHeight: '380px', overflowY: 'auto' }}>
+                        ${filtered.map(c => html`
                             <div key=${c.id} onClick=${() => onPick(c)} title="選擇此演員"
                                 style=${{ border: '1px solid #eee', borderRadius: '8px', padding: '8px', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center', transition: 'background 0.15s' }}
                                 onMouseOver=${(e) => e.currentTarget.style.background = '#f5f9ff'}
@@ -737,10 +780,11 @@ function ScrapeCandidateModal({ actorName, candidates, onPick, onClose }) {
                                 </div>
                             </div>
                         `)}
+                        ${filtered.length === 0 && html`<div style=${{ gridColumn: '1 / -1', color: '#999', textAlign: 'center', padding: '20px 0' }}>目前清單沒有相符的, 試試按「重新搜尋」用此關鍵字查詢網站。</div>`}
                     </div>
                 </div>
                 <div className="modal-footer">
-                    <button className="btn-block" onClick=${onClose}>取消</button>
+                    <button className="btn-block" onClick=${onClose} disabled=${busy}>取消</button>
                 </div>
             </div>
         </div>`;
