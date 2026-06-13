@@ -136,13 +136,48 @@ async function openJavScraperWindow(keyword) {
                     if (window.location.href.indexOf('vl_searchbyid.php') !== -1) {
                         var videoItems = document.querySelectorAll('#videothumblist .video, .videothumblist .video');
                         if (videoItems.length > 0) {
-                            console.log("TPOS: Multiple results detected.");
-                            document.title = 'TPOS_MULTIPLE_RESULTS';
+                            // 特殊情況: 剛好兩個搜尋結果, 且識別碼皆與搜尋條件相同、封面圖也相同
+                            // -> 視為同一作品, 自動選擇第一個結果繼續匯入
+                            var autoSelected = false;
+                            if (videoItems.length === 2) {
+                                var searchKeyword = '';
+                                try {
+                                    searchKeyword = (new URLSearchParams(window.location.search).get('keyword') || '').trim().toUpperCase();
+                                } catch (e) { }
+
+                                if (searchKeyword) {
+                                    var ids = [];
+                                    var covers = [];
+                                    var links = [];
+                                    for (var vi = 0; vi < videoItems.length; vi++) {
+                                        var idEl = videoItems[vi].querySelector('.id');
+                                        var imgEl = videoItems[vi].querySelector('img');
+                                        var linkEl = videoItems[vi].querySelector('a');
+                                        ids.push(idEl ? idEl.innerText.trim().toUpperCase() : '');
+                                        covers.push(imgEl ? imgEl.src : '');
+                                        links.push(linkEl ? linkEl.href : '');
+                                    }
+                                    var idsMatchKeyword = ids[0] === searchKeyword && ids[1] === searchKeyword;
+                                    var coversMatch = !!covers[0] && covers[0] === covers[1];
+                                    if (idsMatchKeyword && coversMatch && links[0]) {
+                                        console.log("TPOS: Two identical results detected, auto-selecting first one.");
+                                        autoSelected = true;
+                                        clearInterval(window.__tposCheckInterval);
+                                        window.location.href = links[0];
+                                    }
+                                }
+                            }
+
+                            if (!autoSelected) {
+                                console.log("TPOS: Multiple results detected.");
+                                document.title = 'TPOS_MULTIPLE_RESULTS';
+                                clearInterval(window.__tposCheckInterval);
+                            }
                         } else {
                             console.log("TPOS: No results found.");
                             document.title = 'TPOS_NOT_FOUND';
+                            clearInterval(window.__tposCheckInterval);
                         }
-                        clearInterval(window.__tposCheckInterval);
                     }
                 }, 1500 + Math.floor(Math.random() * 1000));
             `);

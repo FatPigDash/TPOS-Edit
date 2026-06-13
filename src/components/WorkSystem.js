@@ -458,7 +458,7 @@ function parseTimeToSeconds(timeStr) {
     return null;
 }
 
-function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply, onClear }) {
+function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear, canGoBack, onGoBack }) {
     const [work, setWork] = React.useState(null);
     const [images, setImages] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
@@ -557,6 +557,11 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
                     <button className="btn-ghost" onClick=${() => setIsFilterSidebarOpen(!isFilterSidebarOpen)} title=${isFilterSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px', padding: '4px' }}>
                         <${PanelLeft} size=${20} />
                     </button>
+                    ${canGoBack && html`
+                        <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ marginRight: '8px', padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <${ArrowLeft} size=${20} />
+                        </button>
+                    `}
                     <h3 style=${{ margin: 0 }}>作品預覽</h3>
                 </div>
                 <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -579,10 +584,7 @@ function WorkDetails({ workId, onBack, onEdit, uiFilters, setUiFilters, onApply,
 
             <div className="content-area">
                 <div className="content-header">
-                    <div style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div className="nav-btn" onClick=${onBack} style=${{ cursor: 'pointer' }}><${ArrowLeft} size=${24} /></div>
-                    </div>
-                    <div className="result-info" style=${{ flex: 1, marginLeft: '16px' }}>作品詳情</div>
+                    <div className="result-info" style=${{ flex: 1 }}>作品詳情</div>
                     <button className="btn-primary" onClick=${() => onEdit(workId)}><${Edit} size=${16} style=${{ marginRight: 6 }} /> 編輯作品</button>
                 </div>
 

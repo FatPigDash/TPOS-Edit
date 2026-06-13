@@ -2,7 +2,7 @@ const React = require('react');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const {
-    Plus, MoreVertical, X, Palette, Trash2
+    Plus, MoreVertical, X, Palette, Trash2, ArrowLeft
 } = require('lucide-react');
 
 const { db } = require('../utils/db');
@@ -68,7 +68,7 @@ function TagDeleteModal({ tagId, tagName, onClose, onDeleteSuccess }) {
         <//>`;
 }
 
-function TagSystem() {
+function TagSystem({ canGoBack, onGoBack }) {
     const [groups, setGroups] = React.useState([]);
     const [isAddingGroup, setIsAddingGroup] = React.useState(false);
     const [addingTagGroupId, setAddingTagGroupId] = React.useState(null);
@@ -348,7 +348,15 @@ function TagSystem() {
     const inputProps = { className: "quick-input", autoFocus: true, style: { color: '#333333' }, onClick: e => e.stopPropagation(), onDragStart: (e) => e.preventDefault(), onMouseDown: (e) => e.stopPropagation() };
 
     return html`
-        <div className="tag-board" ref=${boardRef} onMouseDown=${handleBoardMouseDown} onScroll=${handleScroll} onContextMenu=${e => e.preventDefault()}>
+        <div style=${{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+            ${canGoBack && html`
+                <div style=${{ padding: '8px 16px', flexShrink: 0 }}>
+                    <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                        <${ArrowLeft} size=${18} />
+                    </button>
+                </div>
+            `}
+            <div className="tag-board" style=${{ flex: 1, minHeight: 0 }} ref=${boardRef} onMouseDown=${handleBoardMouseDown} onScroll=${handleScroll} onContextMenu=${e => e.preventDefault()}>
             ${groups.map(group => {
         const isGroupEditing = editingTarget?.type === 'group' && editingTarget.id === group.id;
         const isGroupMenuOpen = menuOpenGroupId === group.id;
@@ -475,6 +483,7 @@ function TagSystem() {
                 </div>
             </div>
             ${deletingTag && html`<${TagDeleteModal} tagId=${deletingTag.id} tagName=${deletingTag.name} onClose=${() => setDeletingTag(null)} onDeleteSuccess=${loadTags} />`}
+            </div>
         </div>`;
 }
 

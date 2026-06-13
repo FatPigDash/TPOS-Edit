@@ -7,7 +7,7 @@ const { ipcRenderer } = require('electron');
 const { dialog } = require('@electron/remote');
 const {
     FolderOpen, PlayCircle, PauseCircle, Square, RotateCw, CheckCircle2,
-    XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderInput, ImageIcon
+    XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderInput, ImageIcon, ArrowLeft
 } = require('lucide-react');
 const { openJavScraperWindow, extractJavDataFromWindow } = require('./Scraper');
 const { useColumnWidths, ColumnResizeHandle } = require('./Shared');
@@ -108,7 +108,7 @@ function moveToFolder(dir, folderName, fileName) {
     return newFileName;
 }
 
-function VideoImportSystem() {
+function VideoImportSystem({ canGoBack, onGoBack }) {
     const [folderPath, setFolderPath] = React.useState('');
     const [items, setItems] = React.useState([]);
     const [isRunning, setIsRunning] = React.useState(false);
@@ -508,6 +508,11 @@ function VideoImportSystem() {
         <div className="content-area" style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div className="content-header" style=${{ flexDirection: 'column', alignItems: 'flex-start', gap: '12px', height: 'auto' }}>
                 <div className="result-info" style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    ${canGoBack && html`
+                        <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <${ArrowLeft} size=${18} />
+                        </button>
+                    `}
                     <${FolderInput} size=${22} /> 影片匯入
                 </div>
                 <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>

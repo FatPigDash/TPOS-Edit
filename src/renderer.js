@@ -7,7 +7,7 @@ const ReactDOM = require('react-dom/client');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const {
-    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog, FolderInput
+    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog, FolderInput, ArrowLeft
 } = require('lucide-react');
 
 const { fullTitle } = require('./version');
@@ -47,15 +47,85 @@ function App() {
     const [totalPages, setTotalPages] = React.useState(1);
     const [isLoading, setIsLoading] = React.useState(false);
 
+    // 演員資料庫狀態 (提升至 App 層級，以便導覽歷史可以記錄/還原)
+    const [actorUiFilters, setActorUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
+    const [actorAppliedFilters, setActorAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
+    const [actorSortOrder, setActorSortOrder] = React.useState('number_desc');
+    const [actorViewMode, setActorViewMode] = React.useState('normal'); // 'normal' | 'duplicates'
+    const [actorCurrentPage, setActorCurrentPage] = React.useState(1);
+
     // 記住作品列表的捲動位置，返回列表時還原 (避免每次都跳回頂部)
     const listContentRef = React.useRef(null);
     const listScrollPosRef = React.useRef(0);
+
+    // 記住演員列表的捲動位置
+    const actorContentRef = React.useRef(null);
+    const actorScrollPosRef = React.useRef(0);
+
+    // 「返回上一頁」導覽歷史 (最多紀錄5個步驟)
+    const [navHistory, setNavHistory] = React.useState([]);
+    const [restoreVersion, setRestoreVersion] = React.useState(0);
+    const isRestoringRef = React.useRef(false);
 
     React.useLayoutEffect(() => {
         if (viewMode === 'list' && listContentRef.current) {
             listContentRef.current.scrollTop = listScrollPosRef.current;
         }
-    }, [viewMode]);
+    }, [viewMode, restoreVersion]);
+
+    React.useLayoutEffect(() => {
+        if (activeTab === 'actors' && actorContentRef.current) {
+            actorContentRef.current.scrollTop = actorScrollPosRef.current;
+        }
+    }, [activeTab, restoreVersion]);
+
+    // 記錄目前頁面狀態，供「返回上一頁」還原 (最多保留5筆)
+    const pushHistory = () => {
+        const snapshot = {
+            activeTab, viewMode, selectedWorkId,
+            works: {
+                uiFilters, appliedFilters, sortOrder, currentPage, isSidebarOpen,
+                scrollTop: listScrollPosRef.current
+            },
+            actors: {
+                uiFilters: actorUiFilters, appliedFilters: actorAppliedFilters, sortOrder: actorSortOrder,
+                currentPage: actorCurrentPage, viewMode: actorViewMode,
+                scrollTop: actorScrollPosRef.current
+            }
+        };
+        setNavHistory(prev => {
+            const next = [...prev, snapshot];
+            return next.length > 5 ? next.slice(next.length - 5) : next;
+        });
+    };
+
+    // 返回上一個操作頁面，還原當時的畫面設定 (視窗位置、篩選條件、排序...)
+    const goBack = () => {
+        if (navHistory.length === 0) return;
+        const snap = navHistory[navHistory.length - 1];
+        setNavHistory(navHistory.slice(0, -1));
+        isRestoringRef.current = true;
+
+        setActiveTab(snap.activeTab);
+        setViewMode(snap.viewMode);
+        setSelectedWorkId(snap.selectedWorkId);
+
+        setUiFilters(snap.works.uiFilters);
+        setAppliedFilters(snap.works.appliedFilters);
+        setSortOrder(snap.works.sortOrder);
+        setCurrentPage(snap.works.currentPage);
+        setIsSidebarOpen(snap.works.isSidebarOpen);
+        listScrollPosRef.current = snap.works.scrollTop;
+
+        setActorUiFilters(snap.actors.uiFilters);
+        setActorAppliedFilters(snap.actors.appliedFilters);
+        setActorSortOrder(snap.actors.sortOrder);
+        setActorCurrentPage(snap.actors.currentPage);
+        setActorViewMode(snap.actors.viewMode);
+        actorScrollPosRef.current = snap.actors.scrollTop;
+
+        setRestoreVersion(v => v + 1);
+    };
 
     const loadWorks = () => {
         if (!db) return;
@@ -226,9 +296,23 @@ function App() {
         }, 100);
     };
 
-    React.useEffect(() => { setCurrentPage(1); }, [appliedFilters]);
+    React.useEffect(() => {
+        if (isRestoringRef.current) return;
+        setCurrentPage(1);
+    }, [appliedFilters]);
     // 監聽 sortOrder 的變化來重新載入
     React.useEffect(() => { loadWorks(); }, [activeTab, viewMode, currentPage, appliedFilters, sortOrder]);
+
+    // 演員資料庫: 篩選/排序/模式變更時重置頁碼 (還原導覽歷史時跳過)
+    React.useEffect(() => {
+        if (isRestoringRef.current) return;
+        setActorCurrentPage(1);
+    }, [actorAppliedFilters, actorSortOrder, actorViewMode]);
+
+    // 還原導覽歷史後，重置 isRestoringRef (須在上述重置頁碼的 effect 之後執行)
+    React.useEffect(() => {
+        isRestoringRef.current = false;
+    }, [restoreVersion]);
 
     const getSearchConditions = () => {
         const conds = [];
@@ -263,12 +347,14 @@ function App() {
     };
 
     const handleClearFilter = () => {
+        pushHistory();
         const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
     };
 
     const handleActorQuickSearch = (actor) => {
+        pushHistory();
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
         const newFilters = {
             name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte',
@@ -286,26 +372,26 @@ function App() {
             <div className="navbar">
                 <div className="nav-title">${fullTitle}</div>
                 <div className="nav-tabs">
-                    <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
-                    <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('tags')}><${Tag} size=${16} /> 標籤系統</button>
-                    <button className="nav-btn ${activeTab === 'actors' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('actors')}><${Users} size=${16} /> 演員資料庫</button>
-                    <button className="nav-btn ${activeTab === 'fileOrganizer' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('fileOrganizer')}><${FolderCog} size=${16} /> 影片整理</button>
-                    <button className="nav-btn ${activeTab === 'videoImport' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => setActiveTab('videoImport')}><${FolderInput} size=${16} /> 影片匯入</button>
+                    <button className="nav-btn ${activeTab === 'works' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { if (activeTab !== 'works') pushHistory(); setActiveTab('works'); setViewMode('list'); }}><${Database} size=${16}/> 作品資料庫</button>
+                    <button className="nav-btn ${activeTab === 'tags' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { if (activeTab !== 'tags') pushHistory(); setActiveTab('tags'); }}><${Tag} size=${16} /> 標籤系統</button>
+                    <button className="nav-btn ${activeTab === 'actors' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { if (activeTab !== 'actors') pushHistory(); setActiveTab('actors'); }}><${Users} size=${16} /> 演員資料庫</button>
+                    <button className="nav-btn ${activeTab === 'fileOrganizer' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { if (activeTab !== 'fileOrganizer') pushHistory(); setActiveTab('fileOrganizer'); }}><${FolderCog} size=${16} /> 影片整理</button>
+                    <button className="nav-btn ${activeTab === 'videoImport' ? 'active' : ''}" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { if (activeTab !== 'videoImport') pushHistory(); setActiveTab('videoImport'); }}><${FolderInput} size=${16} /> 影片匯入</button>
                 </div>
-                ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
+                ${activeTab === 'works' && html`<div className="nav-actions"><button className="btn-primary" disabled=${viewMode === 'edit'} style=${viewMode === 'edit' ? { opacity: 0.4, cursor: 'not-allowed' } : {}} onClick=${() => { pushHistory(); setSelectedWorkId(null); setViewMode('edit'); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增作品</button></div>`}
             </div>
-            <div style=${{ flex: 1, overflow: 'hidden', display: ['works', 'tags', 'actors'].includes(activeTab) ? 'block' : 'none' }}>
-                ${activeTab === 'works' ? (
-            viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => setViewMode('list')} onSaveSuccess=${() => { setViewMode('list'); loadWorks(); }} />` :
-                viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId} 
-                            uiFilters=${uiFilters} 
-                            setUiFilters=${setUiFilters} 
-                            onApply=${() => { setAppliedFilters({ ...uiFilters }); setViewMode('list'); }} 
+            <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'works' ? 'block' : 'none' }}>
+                ${(
+            viewMode === 'edit' ? html`<${WorkEditor} initialWorkId=${selectedWorkId} setIsLoading=${setIsLoading} onCancel=${() => { pushHistory(); setViewMode('list'); }} onSaveSuccess=${() => { pushHistory(); setViewMode('list'); loadWorks(); }} />` :
+                viewMode === 'details' ? html`<${WorkDetails} workId=${selectedWorkId}
+                            uiFilters=${uiFilters}
+                            setUiFilters=${setUiFilters}
+                            onApply=${() => { pushHistory(); setAppliedFilters({ ...uiFilters }); setViewMode('list'); }}
                             onClear=${handleClearFilter}
-                            onBack=${() => { setViewMode('list'); setSelectedWorkId(null); }} 
-                            onEdit=${(id) => { setSelectedWorkId(id); setViewMode('edit'); }} />` :
+                            onEdit=${(id) => { pushHistory(); setSelectedWorkId(id); setViewMode('edit'); }}
+                            canGoBack=${navHistory.length > 0} onGoBack=${goBack} />` :
                     html`<div className="main-layout">
-                        ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => setAppliedFilters({ ...uiFilters })} onClear=${handleClearFilter} />`}
+                        ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => { pushHistory(); setAppliedFilters({ ...uiFilters }); }} onClear=${handleClearFilter} />`}
                         <div className="content-area" ref=${listContentRef} onScroll=${e => { listScrollPosRef.current = e.target.scrollTop; }}>
                             <div className="content-header" style=${{ alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', height: 'auto', minHeight: '60px', padding: '16px 20px' }}>
                                 <div style=${{ display: 'flex', alignItems: 'flex-start', flex: 1, minWidth: '300px' }}>
@@ -313,7 +399,14 @@ function App() {
                                         <${PanelLeft} size=${20} />
                                     </button>
                                     <div style=${{ flex: 1 }}>
-                                        <div className="result-info" style=${{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>搜尋結果: 共${totalItems} 筆</div>
+                                        <div className="result-info" style=${{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            ${navHistory.length > 0 && html`
+                                                <button className="btn-ghost" onClick=${goBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                                                    <${ArrowLeft} size=${18} />
+                                                </button>
+                                            `}
+                                            搜尋結果: 共${totalItems} 筆
+                                        </div>
                                         <div style=${{ fontSize: '14px', color: '#666', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                             ${getSearchConditions().length === 0 ? html`<div style=${{ color: '#999', fontStyle: 'italic' }}>尚未搜尋</div>` : getSearchConditions().map(cond => html`<div key=${cond} style=${{ display: 'inline-block', backgroundColor: '#e3f2fd', color: '#0d47a1', padding: '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: '1px solid #bbdefb' }}>${cond}</div>`)}
                                         </div>
@@ -322,7 +415,7 @@ function App() {
                                 <div style=${{ display: 'flex', alignItems: 'flex-start' }}>
                                     <div style=${{ display: 'flex', alignItems: 'center', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '6px' }}>
                                         <${ArrowUpDown} size=${16} color="#666" style=${{ margin: '0 8px' }} />
-                                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px', border: 'none', backgroundColor: 'transparent', fontWeight: 'bold' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)}>
+                                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px', border: 'none', backgroundColor: 'transparent', fontWeight: 'bold' }} value=${sortOrder} onChange=${e => { pushHistory(); setSortOrder(e.target.value); }}>
                                             <option value="created_desc">新增時間 (新 → 舊)</option>
                                             <option value="code_asc">識別碼 (A → Z)</option>
                                             <option value="name_asc">作品名稱 (A → Z)</option>
@@ -335,20 +428,35 @@ function App() {
                                 </div>
                             </div>
                             <div className="card-grid">
-                                ${works.map(w => html`<${WorkCard} key=${w.id} work=${w} onClick=${id => { setSelectedWorkId(id); setViewMode('details'); }} />`)}
+                                ${works.map(w => html`<${WorkCard} key=${w.id} work=${w} onClick=${id => { pushHistory(); setSelectedWorkId(id); setViewMode('details'); }} />`)}
                             </div>
                             <div style=${{ marginTop: 'auto', borderTop: '1px solid #eee' }}>
-                                <${Pagination} currentPage=${currentPage} totalPages=${totalPages} onPageChange=${p => setCurrentPage(p)} />
+                                <${Pagination} currentPage=${currentPage} totalPages=${totalPages} onPageChange=${p => { pushHistory(); setCurrentPage(p); }} />
                             </div>
                         </div>
                     </div>`
-        ) : activeTab === 'tags' ? html`<${TagSystem} />` : activeTab === 'actors' ? html`<${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} />` : null}
+        )}
+            </div>
+            <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'tags' ? 'block' : 'none' }}>
+                <${TagSystem} canGoBack=${navHistory.length > 0} onGoBack=${goBack} />
+            </div>
+            <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'actors' ? 'block' : 'none' }}>
+                <${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch}
+                    uiFilters=${actorUiFilters} setUiFilters=${setActorUiFilters}
+                    appliedFilters=${actorAppliedFilters} setAppliedFilters=${setActorAppliedFilters}
+                    sortOrder=${actorSortOrder} setSortOrder=${setActorSortOrder}
+                    viewMode=${actorViewMode} setViewMode=${setActorViewMode}
+                    currentPage=${actorCurrentPage} setCurrentPage=${setActorCurrentPage}
+                    contentRef=${actorContentRef} onContentScroll=${e => { actorScrollPosRef.current = e.target.scrollTop; }}
+                    canGoBack=${navHistory.length > 0} onGoBack=${goBack}
+                    pushHistory=${pushHistory} isRestoringRef=${isRestoringRef}
+                />
             </div>
             <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'fileOrganizer' ? 'block' : 'none' }}>
-                <${FileOrganizerSystem} />
+                <${FileOrganizerSystem} canGoBack=${navHistory.length > 0} onGoBack=${goBack} />
             </div>
             <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'videoImport' ? 'block' : 'none' }}>
-                <${VideoImportSystem} />
+                <${VideoImportSystem} canGoBack=${navHistory.length > 0} onGoBack=${goBack} />
             </div>
         </div>`;
 }

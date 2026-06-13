@@ -9,7 +9,7 @@ const { URL } = require('url');
 const { dialog } = require('@electron/remote');
 const {
     FolderOpen, PlayCircle, PauseCircle, Square, RotateCw, CheckCircle2,
-    XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderCog
+    XCircle, Loader2, FileVideo, SkipForward, AlertTriangle, FolderCog, ArrowLeft
 } = require('lucide-react');
 const { openJavScraperWindow, extractJavDataFromWindow, DESKTOP_USER_AGENT } = require('./Scraper');
 const { useColumnWidths, ColumnResizeHandle } = require('./Shared');
@@ -177,7 +177,7 @@ function downloadImage(url, destPath) {
     });
 }
 
-function FileOrganizerSystem() {
+function FileOrganizerSystem({ canGoBack, onGoBack }) {
     const [folderPath, setFolderPath] = React.useState('');
     const [items, setItems] = React.useState([]);
     const [isRunning, setIsRunning] = React.useState(false);
@@ -499,6 +499,11 @@ function FileOrganizerSystem() {
         <div className="content-area" style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div className="content-header" style=${{ flexDirection: 'column', alignItems: 'flex-start', gap: '12px', height: 'auto' }}>
                 <div className="result-info" style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    ${canGoBack && html`
+                        <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <${ArrowLeft} size=${18} />
+                        </button>
+                    `}
                     <${FolderCog} size=${22} /> 影片檔案整理
                 </div>
                 <div style=${{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>

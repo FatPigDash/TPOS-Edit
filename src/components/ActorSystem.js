@@ -6,7 +6,7 @@ const fs = require('fs');
 const { webUtils } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
-    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2
+    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2, ArrowLeft
 } = require('lucide-react');
 
 const { db, actorsImgDir } = require('../utils/db');
@@ -397,20 +397,24 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
     `;
 }
 
-function ActorSystem({ setIsLoading, onNavigateToWork }) {
+function ActorSystem({
+    setIsLoading, onNavigateToWork,
+    uiFilters, setUiFilters,
+    appliedFilters, setAppliedFilters,
+    sortOrder, setSortOrder,
+    viewMode, setViewMode,
+    currentPage, setCurrentPage,
+    contentRef, onContentScroll,
+    canGoBack, onGoBack,
+    pushHistory, isRestoringRef
+}) {
     const ITEMS_PER_PAGE = 24;
     const [actors, setActors] = React.useState([]);
-    // viewMode: 'normal' | 'duplicates'
-    const [viewMode, setViewMode] = React.useState('normal');
-    
-    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
-    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false });
-    const [sortOrder, setSortOrder] = React.useState('number_desc');
+
     const [editingActorId, setEditingActorId] = React.useState(null);
     const [mergingActor, setMergingActor] = React.useState(null);
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const [viewingImage, setViewingImage] = React.useState(null);
-    const [currentPage, setCurrentPage] = React.useState(1);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
 
@@ -520,15 +524,20 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
         }, 50);
     };
 
-    React.useEffect(() => { setCurrentPage(1); }, [appliedFilters, sortOrder, viewMode]);
+    React.useEffect(() => {
+        if (isRestoringRef && isRestoringRef.current) return;
+        setCurrentPage(1);
+    }, [appliedFilters, sortOrder, viewMode]);
     React.useEffect(() => { loadActors(); }, [currentPage, appliedFilters, sortOrder, viewMode]);
 
-    const handleApply = () => { 
-        setViewMode('normal'); 
-        setAppliedFilters({ ...uiFilters }); 
+    const handleApply = () => {
+        pushHistory && pushHistory();
+        setViewMode('normal');
+        setAppliedFilters({ ...uiFilters });
     };
-    
+
     const handleClear = () => {
+        pushHistory && pushHistory();
         const empty = { name: '', code: '', noImage: false, isFavorite: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
@@ -536,6 +545,7 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
     };
 
     const handleFindDuplicates = () => {
+        pushHistory && pushHistory();
         // 清除其他篩選條件，專注於顯示重複項
         const empty = { name: '', code: '', noImage: false, isFavorite: false };
         setUiFilters(empty);
@@ -651,10 +661,15 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                     </button>
                 </div>
             </div>
-            <div className="content-area">
+            <div className="content-area" ref=${contentRef} onScroll=${onContentScroll}>
                 <div className="content-header">
-                    <div className="result-info">
-                        ${viewMode === 'duplicates' 
+                    <div className="result-info" style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        ${canGoBack && html`
+                            <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                                <${ArrowLeft} size=${18} />
+                            </button>
+                        `}
+                        ${viewMode === 'duplicates'
                             ? html`<span style=${{color: '#d32f2f', fontWeight: 'bold', display:'flex', alignItems:'center'}}><${AlertTriangle} size=${16} style=${{marginRight:6}}/> 相似名稱搜尋結果: ${totalItems} 位</span>`
                             : html`搜尋結果: 共${totalItems} 位`
                         }
@@ -673,7 +688,7 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                             </button>
                         `}
                         <button className="btn-primary" onClick=${() => { setEditingActorId(null); setIsModalOpen(true); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增演員</button>
-                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => setSortOrder(e.target.value)} disabled=${viewMode === 'duplicates'}>
+                        <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => { pushHistory && pushHistory(); setSortOrder(e.target.value); }} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
                             <option value="name_asc">依名字 (由小到大)</option>
@@ -701,7 +716,7 @@ function ActorSystem({ setIsLoading, onNavigateToWork }) {
                     `)}
                 </div>
                 <div style=${{ marginTop: 'auto', borderTop: '1px solid #eee' }}>
-                    <${Pagination} currentPage=${currentPage} totalPages=${totalPages} onPageChange=${p => setCurrentPage(p)} />
+                    <${Pagination} currentPage=${currentPage} totalPages=${totalPages} onPageChange=${p => { pushHistory && pushHistory(); setCurrentPage(p); }} />
                 </div>
             </div>
             ${isModalOpen && html`<${ActorEditModal} actorId=${editingActorId} setIsLoading=${setIsLoading} onClose=${() => setIsModalOpen(false)} onSaveSuccess=${loadActors} />`}
