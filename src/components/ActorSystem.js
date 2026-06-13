@@ -6,7 +6,8 @@ const fs = require('fs');
 const { webUtils } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
-    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2, ArrowLeft
+    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2, ArrowLeft,
+    Globe, Loader2, StopCircle
 } = require('lucide-react');
 
 const { db, actorsImgDir } = require('../utils/db');
@@ -17,10 +18,55 @@ const {
 const {
     ConfirmModal, Modal, ImageViewerModal, Pagination, SearchHelpText
 } = require('./Shared');
+const { WorkCard } = require('./WorkSystem');
+const { scrapeActorByName, downloadImage, guessImageExt } = require('./ActorScraper');
+
+// 抓取單一演員資訊並寫入資料庫 (供批量與單張按鈕共用)
+// 回傳 { status: 'updated' | 'notfound' | 'error', message?, imageUpdated? }
+async function scrapeAndUpdateActor(actor) {
+    let res;
+    try {
+        res = await scrapeActorByName(actor.name);
+    } catch (e) {
+        return { status: 'error', message: e.message };
+    }
+    if (!res.success) return { status: 'notfound', message: res.message };
+
+    const d = res.data;
+    try {
+        // 別名: 直接以抓取結果覆蓋舊資料 (避免新舊格式造成重複), 並去除重複
+        const aliasesStr = [...new Set((d.aliases || []).map(a => (a || '').trim()).filter(s => s))].join(',');
+
+        // 文字欄位: 有抓到才覆蓋, 否則保留原值
+        const birthdate = d.birthdate || actor.birthdate || null;
+        const sizes = d.sizes || actor.sizes || null;
+        const avPeriod = d.av_period || actor.av_period || null;
+        const nameReading = d.name_reading || actor.name_reading || null;
+
+        db.prepare('UPDATE actors SET aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ? WHERE id = ?')
+            .run(aliasesStr, birthdate, sizes, avPeriod, nameReading, actor.id);
+
+        // 圖片: 僅在原本沒有圖片時才下載
+        let imageUpdated = false;
+        if (!actor.image_path && d.image_url) {
+            const ext = guessImageExt(d.image_url);
+            const fileName = `actors_${actor.actor_number}_001${ext}`;
+            const destPath = path.join(actorsImgDir, fileName);
+            try {
+                await downloadImage(d.image_url, destPath);
+                db.prepare('UPDATE actors SET image_path = ? WHERE id = ?').run(fileName, actor.id);
+                imageUpdated = true;
+            } catch (e) { /* 圖片下載失敗不影響文字資料 */ }
+        }
+        return { status: 'updated', imageUpdated };
+    } catch (e) {
+        return { status: 'error', message: e.message };
+    }
+}
 
 // 6. 演員系統元件 (Actor System)
 
-function ActorCard({ actor, onEdit, onDelete, onMerge, onImageClick, onToggleFavorite, onSearch }) {
+function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFavorite, onSearch }) {
     const [showMenu, setShowMenu] = React.useState(false);
     const menuRef = React.useRef(null);
     const [imageError, setImageError] = React.useState(false);
@@ -67,11 +113,11 @@ function ActorCard({ actor, onEdit, onDelete, onMerge, onImageClick, onToggleFav
                 `}
             </div>
             <div style=${{ padding: '8px', fontSize: '12px', color: '#666', fontWeight: 'bold' }}>${actor.actor_number}</div>
-            <div className="card-cover" onClick=${() => imgSrc && !imageError && onImageClick(imgSrc)} style=${{ cursor: imgSrc && !imageError ? 'zoom-in' : 'default', height: '180px' }}>
+            <div className="card-cover" onClick=${() => onOpenDetail(actor.id)} title="查看詳細資料" style=${{ cursor: 'pointer', height: '180px' }}>
                 ${imgSrc && !imageError ? html`<img src="${imgSrc}" style=${{ width: '100%', height: '100%', objectFit: 'cover' }} onError=${handleImageError} />` : (imageError ? html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#e6a700' }}><${AlertTriangle} size=${48} /><span style=${{ marginTop: 4, fontWeight: 'bold' }}>ERROR</span></div>` : html`<${Users} size=${48} color="#ccc" />`)}
             </div>
             <div className="card-info">
-                <div className="card-title" title=${actor.name}>${actor.name}</div>
+                <div className="card-title" title=${actor.name} onClick=${() => onOpenDetail(actor.id)} style=${{ cursor: 'pointer' }}>${actor.name}</div>
                 ${actor.aliases && html`<div style=${{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>(${actor.aliases})</div>`}
                 <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px', marginTop: '4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span>作品: ${actor.work_count || 0}部</span>
@@ -89,7 +135,10 @@ function ActorCard({ actor, onEdit, onDelete, onMerge, onImageClick, onToggleFav
 function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
     const isEdit = !!actorId;
     const [name, setName] = React.useState("");
-    const [aliases, setAliases] = React.useState("");
+    const [aliasItems, setAliasItems] = React.useState([""]);
+    const [birthdate, setBirthdate] = React.useState("");
+    const [sizes, setSizes] = React.useState("");
+    const [avPeriod, setAvPeriod] = React.useState("");
     const [actorNumber, setActorNumber] = React.useState("");
     const [image, setImage] = React.useState(null);
     const [originalImage, setOriginalImage] = React.useState(null);
@@ -98,13 +147,26 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
     const [initialState, setInitialState] = React.useState(null);
     const [showDirtyWarning, setShowDirtyWarning] = React.useState(false);
 
+    // 別名動態清單操作 (預設一欄，可自行增減)
+    const splitAliases = (str) => {
+        const arr = (str || "").split(/[,，]/).map(s => s.trim()).filter(s => s);
+        return arr.length ? arr : [""];
+    };
+    const cleanAliases = (arr) => arr.map(s => s.trim()).filter(s => s);
+    const updateAlias = (idx, v) => setAliasItems(prev => prev.map((x, i) => i === idx ? v : x));
+    const addAlias = () => setAliasItems(prev => [...prev, ""]);
+    const removeAlias = (idx) => setAliasItems(prev => prev.length <= 1 ? [""] : prev.filter((_, i) => i !== idx));
+
     React.useEffect(() => {
         if (!db) return;
         if (isEdit) {
             const actor = db.prepare('SELECT * FROM actors WHERE id=?').get(actorId);
             if (actor) {
                 setName(actor.name);
-                setAliases(actor.aliases || "");
+                setAliasItems(splitAliases(actor.aliases));
+                setBirthdate(actor.birthdate || "");
+                setSizes(actor.sizes || "");
+                setAvPeriod(actor.av_period || "");
                 setActorNumber(actor.actor_number);
                 let imgState = null;
                 if (actor.image_path) {
@@ -114,13 +176,14 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setImage(imgState);
                 setOriginalImage(actor.image_path);
                 setIsFavorite(actor.is_favorite || 0);
-                setInitialState({ name: actor.name, aliases: actor.aliases || "", image: imgState, isFavorite: actor.is_favorite || 0 });
+                setInitialState({ name: actor.name, aliases: cleanAliases(splitAliases(actor.aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", image: imgState, isFavorite: actor.is_favorite || 0 });
             }
         } else {
             const num = getNewActorNumber(db);
             setActorNumber(num);
             setIsFavorite(0);
-            setInitialState({ name: '', aliases: '', image: null, isFavorite: 0 });
+            setAliasItems([""]);
+            setInitialState({ name: '', aliases: '', birthdate: '', sizes: '', avPeriod: '', image: null, isFavorite: 0 });
         }
     }, [actorId]);
 
@@ -138,7 +201,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     const isDirty = () => {
         if (!initialState) return false;
-        return name !== initialState.name || aliases !== initialState.aliases || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
+        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.aliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
     };
 
     const attemptClose = () => { if (isDirty()) setShowDirtyWarning(true); else onClose(); };
@@ -155,7 +218,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
         const extractedAliases = parsed.aliases;
 
         // 合併現有的別名輸入與提取出的別名
-        const currentAliases = aliases.split(/[,\uff0c]/).map(s => s.trim()).filter(s => s);
+        const currentAliases = cleanAliases(aliasItems);
         // 使用 Set 去重
         const mergedAliases = [...new Set([...currentAliases, ...extractedAliases])].join(',');
 
@@ -179,10 +242,13 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 db.transaction(() => {
                     let currentId = actorId;
                     
+                    const bd = birthdate.trim() || null;
+                    const sz = sizes.trim() || null;
+                    const avp = avPeriod.trim() || null;
                     if (isEdit) {
-                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, actorId);
+                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, bd, sz, avp, actorId);
                     } else {
-                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite) VALUES (?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite);
+                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite, birthdate, sizes, av_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite, bd, sz, avp);
                         currentId = info.lastInsertRowid;
                     }
 
@@ -224,8 +290,30 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                     <small style=${{color: '#888', display: 'block', marginTop: '4px'}}>* 提示: 若輸入 "姓名 (別名)"，儲存時別名會自動加入別名欄位，且顯示名稱保留括號。</small>
                 </div>
                 <div className="filter-group">
-                    <label className="filter-label">別名 / 舊藝名 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(以逗號區隔)</span></label>
-                    <input className="filter-input" value=${aliases} onInput=${e => setAliases(e.target.value)} placeholder="例如: 舊名A, 英文名B" />
+                    <label className="filter-label">別名 / 舊藝名 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(可新增多筆)</span></label>
+                    ${aliasItems.map((val, idx) => html`
+                        <div key=${idx} style=${{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                            <input className="filter-input" style=${{ flex: 1 }} value=${val} onInput=${e => updateAlias(idx, e.target.value)} placeholder=${`別名 ${idx + 1}`} />
+                            <button type="button" className="btn-ghost" title="移除此別名" style=${{ padding: '6px', flexShrink: 0, opacity: aliasItems.length <= 1 ? 0.3 : 1 }} disabled=${aliasItems.length <= 1} onClick=${() => removeAlias(idx)}>
+                                <${Trash2} size=${16} />
+                            </button>
+                        </div>
+                    `)}
+                    <button type="button" className="btn-block" style=${{ width: 'auto', padding: '6px 12px', display: 'inline-flex', alignItems: 'center' }} onClick=${addAlias}>
+                        <${Plus} size=${14} style=${{ marginRight: 4 }} /> 新增別名
+                    </button>
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">生年月日</label>
+                    <input className="filter-input" value=${birthdate} onInput=${e => setBirthdate(e.target.value)} placeholder="例如: 1993年8月16日" />
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">サイズ (三圍)</label>
+                    <input className="filter-input" value=${sizes} onInput=${e => setSizes(e.target.value)} placeholder="例如: T159 / B88(F) / W58 / H86" />
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">AV出演期間</label>
+                    <input className="filter-input" value=${avPeriod} onInput=${e => setAvPeriod(e.target.value)} placeholder="例如: 2015年 ～" />
                 </div>
                 <div className="filter-group">
                     <label className="filter-label">關注演員</label>
@@ -397,8 +485,171 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
     `;
 }
 
+// 女優詳細頁面 (Actor Detail Page)
+function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading }) {
+    const WORKS_PER_PAGE = 15;
+    const [actor, setActor] = React.useState(null);
+    const [works, setWorks] = React.useState([]);
+    const [page, setPage] = React.useState(1);
+    const [totalPages, setTotalPages] = React.useState(1);
+    const [totalWorks, setTotalWorks] = React.useState(0);
+    const [viewingImage, setViewingImage] = React.useState(null);
+    const [imageError, setImageError] = React.useState(false);
+    const [scraping, setScraping] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!db || !actorId) return;
+        try {
+            const a = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId);
+            setActor(a);
+        } catch (e) { console.error(e); }
+        setImageError(false);
+        setPage(1);
+    }, [actorId]);
+
+    // 抓取此演員資訊 (minnano-av)
+    const handleScrapeThis = async () => {
+        if (!actor || scraping) return;
+        setScraping(true);
+        try {
+            const r = await scrapeAndUpdateActor(actor);
+            if (r.status === 'updated') {
+                const a = db.prepare('SELECT * FROM actors WHERE id = ?').get(actor.id);
+                setActor(a);
+                setImageError(false);
+            } else if (r.status === 'notfound') {
+                alert(r.message || '找不到此演員的資料');
+            } else {
+                alert('抓取失敗: ' + (r.message || '未知錯誤'));
+            }
+        } catch (e) {
+            alert('抓取失敗: ' + e.message);
+        }
+        setScraping(false);
+    };
+
+    const loadWorks = () => {
+        if (!db || !actorId) return;
+        setIsLoading(true);
+        setTimeout(() => {
+            try {
+                const total = db.prepare('SELECT COUNT(*) AS c FROM work_actor_link WHERE actor_id = ?').get(actorId).c;
+                setTotalWorks(total);
+                const totalP = Math.ceil(total / WORKS_PER_PAGE) || 1;
+                setTotalPages(totalP);
+                let targetPage = Math.min(page, totalP);
+                if (targetPage < 1) targetPage = 1;
+                const offset = (targetPage - 1) * WORKS_PER_PAGE;
+
+                const rows = db.prepare(`
+                    SELECT w.*, wi.file_name AS cover_image,
+                        (SELECT COUNT(*) FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1) AS fav_actor_count
+                    FROM works w
+                    JOIN work_actor_link l ON w.id = l.work_id AND l.actor_id = ?
+                    LEFT JOIN work_images wi ON w.id = wi.work_id AND wi.is_cover = 1
+                    ORDER BY w.created_at DESC
+                    LIMIT ? OFFSET ?
+                `).all(actorId, WORKS_PER_PAGE, offset);
+
+                const firstGroupOrderResult = db.prepare('SELECT MIN(sort_order) as min_order FROM tag_groups').get();
+                const globalFirstGroupOrder = firstGroupOrderResult ? firstGroupOrderResult.min_order : null;
+                rows.forEach(row => {
+                    try {
+                        row.tags = db.prepare(`SELECT t.name, t.color, tg.sort_order as group_sort_order FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
+                        row.firstGroupOrder = globalFirstGroupOrder;
+                    } catch (e) { row.tags = []; row.firstGroupOrder = null; }
+                });
+                setWorks(rows);
+            } catch (e) { console.error(e); }
+            setIsLoading(false);
+        }, 30);
+    };
+
+    React.useEffect(() => { loadWorks(); }, [actorId, page]);
+
+    if (!actor) return null;
+
+    let imgSrc = null;
+    if (actor.image_path) imgSrc = getFileUrl(path.join(actorsImgDir, actor.image_path));
+    const hasImg = imgSrc && !imageError;
+
+    const aliasList = actor.aliases ? actor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+
+    const labelStyle = { width: '110px', flexShrink: 0, color: '#888', fontSize: '14px', fontWeight: 'bold' };
+    const rowStyle = { display: 'flex', alignItems: 'flex-start', padding: '10px 0', borderBottom: '1px solid #f0f0f0' };
+    const emptyStyle = { color: '#bbb' };
+
+    return html`
+        <div className="main-layout">
+            <div className="content-area">
+                <div className="content-header">
+                    <div className="result-info" style=${{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '18px', fontWeight: 'bold' }}>
+                        <button className="btn-ghost" onClick=${onBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <${ArrowLeft} size=${20} />
+                        </button>
+                        演員編號 ${actor.actor_number}
+                        <button className="btn-primary" onClick=${handleScrapeThis} disabled=${scraping} title="從 minnano-av 抓取此演員資訊"
+                            style=${{ marginLeft: '8px', padding: '4px 12px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: scraping ? 0.6 : 1 }}>
+                            ${scraping
+                                ? html`<${Loader2} size=${15} className="spin-anim" /> 抓取中...`
+                                : html`<${Globe} size=${15} /> 抓取資訊`}
+                        </button>
+                    </div>
+                </div>
+
+                <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '24px', padding: '20px', alignItems: 'flex-start' }}>
+                    <div style=${{ flex: '0 0 320px', maxWidth: '100%' }}>
+                        <div onClick=${() => hasImg && setViewingImage(imgSrc)} style=${{ width: '100%', height: '420px', border: '1px solid #eee', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fafafa', cursor: hasImg ? 'zoom-in' : 'default' }}>
+                            ${hasImg
+                                ? html`<img src="${imgSrc}" style=${{ width: '100%', height: '100%', objectFit: 'cover' }} onError=${() => setImageError(true)} />`
+                                : (imageError
+                                    ? html`<div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: '#e6a700' }}><${AlertTriangle} size=${48} /><span style=${{ marginTop: 4, fontWeight: 'bold' }}>ERROR</span></div>`
+                                    : html`<${Users} size=${64} color="#ccc" />`)
+                            }
+                        </div>
+                    </div>
+                    <div style=${{ flex: 1, minWidth: '280px' }}>
+                        <div style=${{ fontSize: '30px', fontWeight: 'bold', color: '#222', marginBottom: '16px', lineHeight: 1.3 }}>
+                            ${actor.name}${actor.name_reading && html`<span style=${{ fontSize: '16px', fontWeight: 'normal', color: '#888', marginLeft: '8px' }}>（${actor.name_reading}）</span>`}
+                        </div>
+                        <div>
+                            <div style=${rowStyle}>
+                                <span style=${labelStyle}>別名</span>
+                                <div style=${{ flex: 1 }}>
+                                    ${aliasList.length > 0
+                                        ? aliasList.map((a, i) => html`<div key=${i} style=${{ marginBottom: i < aliasList.length - 1 ? '4px' : 0 }}>${a}</div>`)
+                                        : html`<span style=${emptyStyle}>—</span>`}
+                                </div>
+                            </div>
+                            <div style=${rowStyle}><span style=${labelStyle}>生年月日</span><div style=${{ flex: 1 }}>${actor.birthdate || html`<span style=${emptyStyle}>—</span>`}</div></div>
+                            <div style=${rowStyle}><span style=${labelStyle}>サイズ</span><div style=${{ flex: 1 }}>${actor.sizes || html`<span style=${emptyStyle}>—</span>`}</div></div>
+                            <div style=${rowStyle}><span style=${labelStyle}>AV出演期間</span><div style=${{ flex: 1 }}>${actor.av_period || html`<span style=${emptyStyle}>—</span>`}</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style=${{ padding: '0 20px 20px' }}>
+                    <h3 style=${{ borderTop: '2px solid #eee', paddingTop: '16px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        出演作品 <span style=${{ fontSize: '14px', color: '#888', fontWeight: 'normal' }}>(共 ${totalWorks} 部)</span>
+                    </h3>
+                    ${works.length === 0
+                        ? html`<div style=${{ color: '#999', padding: '40px 0', textAlign: 'center' }}>查無此演員的出演作品</div>`
+                        : html`
+                            <div className="card-grid">
+                                ${works.map(w => html`<${WorkCard} key=${w.id} work=${w} onClick=${id => onNavigateToWorkDetails(id)} />`)}
+                            </div>
+                            <div style=${{ borderTop: '1px solid #eee', marginTop: '8px' }}>
+                                <${Pagination} currentPage=${page} totalPages=${totalPages} onPageChange=${p => setPage(p)} />
+                            </div>
+                        `}
+                </div>
+            </div>
+            ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
+        </div>`;
+}
+
 function ActorSystem({
-    setIsLoading, onNavigateToWork,
+    setIsLoading, onNavigateToWork, onNavigateToWorkDetails,
     uiFilters, setUiFilters,
     appliedFilters, setAppliedFilters,
     sortOrder, setSortOrder,
@@ -412,11 +663,14 @@ function ActorSystem({
     const [actors, setActors] = React.useState([]);
 
     const [editingActorId, setEditingActorId] = React.useState(null);
+    const [detailActorId, setDetailActorId] = React.useState(null);
     const [mergingActor, setMergingActor] = React.useState(null);
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const [viewingImage, setViewingImage] = React.useState(null);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
+    const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled }
+    const scrapeCancelRef = React.useRef(false);
 
     const loadActors = () => {
         if (!db) return;
@@ -621,6 +875,50 @@ function ActorSystem({
         }
     };
 
+    // 批量抓取所有演員資訊 (minnano-av)
+    const handleBatchScrape = async () => {
+        if (!db || scrapeProgress) return;
+        if (!confirm('將連線到 minnano-av.com 逐一抓取所有演員的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
+
+        let rows;
+        try {
+            rows = db.prepare('SELECT * FROM actors WHERE is_deleted = 0 ORDER BY actor_number ASC').all();
+        } catch (e) { alert('讀取演員清單失敗: ' + e.message); return; }
+        if (!rows.length) { alert('沒有可抓取的演員。'); return; }
+
+        scrapeCancelRef.current = false;
+        let ok = 0, fail = 0;
+        setScrapeProgress({ total: rows.length, current: 0, name: '', ok, fail, done: false });
+
+        for (let i = 0; i < rows.length; i++) {
+            if (scrapeCancelRef.current) break;
+            const actor = rows[i];
+            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false });
+            try {
+                const r = await scrapeAndUpdateActor(actor);
+                if (r.status === 'updated') ok++; else fail++;
+            } catch (e) { fail++; }
+            setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false });
+            // 隨機延遲 1.5~3.5 秒, 降低被判定為爬蟲的機率
+            if (i < rows.length - 1 && !scrapeCancelRef.current) {
+                await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
+            }
+        }
+
+        setScrapeProgress({ total: rows.length, current: rows.length, name: '', ok, fail, done: true, cancelled: scrapeCancelRef.current });
+        loadActors();
+    };
+
+    // 女優詳細頁面 (點選卡片後顯示，非彈出視窗)
+    if (detailActorId) {
+        return html`<${ActorDetail}
+            actorId=${detailActorId}
+            onBack=${() => setDetailActorId(null)}
+            onNavigateToWorkDetails=${onNavigateToWorkDetails}
+            setIsLoading=${setIsLoading}
+        />`;
+    }
+
     return html`
         <div className="main-layout">
             <div className="sidebar">
@@ -688,6 +986,9 @@ function ActorSystem({
                             </button>
                         `}
                         <button className="btn-primary" onClick=${() => { setEditingActorId(null); setIsModalOpen(true); }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增演員</button>
+                        <button className="btn-block" onClick=${handleBatchScrape} disabled=${viewMode === 'duplicates' || !!scrapeProgress} title="從 minnano-av 批量抓取所有演員資訊" style=${{ display: 'flex', alignItems: 'center' }}>
+                            <${Globe} size=${16} style=${{ marginRight: 4 }} /> 批量抓取資訊
+                        </button>
                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => { pushHistory && pushHistory(); setSortOrder(e.target.value); }} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
@@ -708,9 +1009,9 @@ function ActorSystem({
                             actor=${actor} 
                             onEdit=${(id) => { setEditingActorId(id); setIsModalOpen(true); }} 
                             onMerge=${(actor) => setMergingActor(actor)}
-                            onDelete=${handleDelete} 
-                            onImageClick=${(src) => setViewingImage(src)} 
-                            onToggleFavorite=${handleToggleFavorite} 
+                            onDelete=${handleDelete}
+                            onOpenDetail=${(id) => setDetailActorId(id)}
+                            onToggleFavorite=${handleToggleFavorite}
                             onSearch=${onNavigateToWork} 
                         />
                     `)}
@@ -722,6 +1023,46 @@ function ActorSystem({
             ${isModalOpen && html`<${ActorEditModal} actorId=${editingActorId} setIsLoading=${setIsLoading} onClose=${() => setIsModalOpen(false)} onSaveSuccess=${loadActors} />`}
             ${mergingActor && html`<${MergeActorModal} sourceActor=${mergingActor} onClose=${() => setMergingActor(null)} onMergeSuccess=${loadActors} />`}
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
+            ${scrapeProgress && html`<${ScrapeProgressModal} progress=${scrapeProgress}
+                onStop=${() => { scrapeCancelRef.current = true; }}
+                onClose=${() => setScrapeProgress(null)} />`}
+        </div>`;
+}
+
+// 批量抓取進度視窗
+function ScrapeProgressModal({ progress, onStop, onClose }) {
+    const { total, current, name, ok, fail, done, cancelled } = progress;
+    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+    return html`
+        <div className="modal-overlay" style=${{ zIndex: 2300 }}>
+            <div className="modal-content" style=${{ maxWidth: '480px' }} onClick=${stopPropagation}>
+                <div className="modal-header">
+                    <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <${Globe} size=${20} color="#2196F3" /> 批量抓取演員資訊
+                    </span>
+                    ${done && html`<button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>`}
+                </div>
+                <div className="modal-body" style=${{ padding: '20px 0' }}>
+                    <div style=${{ marginBottom: '12px', fontWeight: 'bold' }}>
+                        ${done
+                            ? (cancelled ? '已中止' : '抓取完成')
+                            : html`處理中 (${current} / ${total})`}
+                    </div>
+                    <div style=${{ height: '14px', background: '#eee', borderRadius: '7px', overflow: 'hidden', marginBottom: '12px' }}>
+                        <div style=${{ width: pct + '%', height: '100%', background: done ? '#28a745' : '#2196F3', transition: 'width 0.3s' }}></div>
+                    </div>
+                    ${!done && html`<div style=${{ fontSize: '13px', color: '#666', marginBottom: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>正在抓取: ${name || '...'}</div>`}
+                    <div style=${{ display: 'flex', gap: '16px', fontSize: '14px' }}>
+                        <span style=${{ color: '#28a745' }}>成功更新: ${ok}</span>
+                        <span style=${{ color: '#dc3545' }}>未更新/失敗: ${fail}</span>
+                    </div>
+                </div>
+                <div className="modal-footer">
+                    ${done
+                        ? html`<button className="btn-primary" onClick=${onClose}>關閉</button>`
+                        : html`<button className="btn-block" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${onStop}><${StopCircle} size=${16} /> 中止</button>`}
+                </div>
+            </div>
         </div>`;
 }
 

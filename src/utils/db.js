@@ -71,6 +71,25 @@ function initDB() {
             alert("資料庫升級失敗 (aliases): " + e.message + "\n請嘗試重啟軟體。");
         }
 
+        // V1.6.0 更新: 新增演員個人檔案欄位 (生年月日 / 三圍尺寸 / AV出演期間)
+        try {
+            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
+            const newCols = [
+                { name: 'birthdate', sql: "ALTER TABLE actors ADD COLUMN birthdate TEXT" },
+                { name: 'sizes', sql: "ALTER TABLE actors ADD COLUMN sizes TEXT" },
+                { name: 'av_period', sql: "ALTER TABLE actors ADD COLUMN av_period TEXT" },
+                { name: 'name_reading', sql: "ALTER TABLE actors ADD COLUMN name_reading TEXT" }
+            ];
+            newCols.forEach(col => {
+                if (!tableInfo.some(c => c.name === col.name)) {
+                    db.prepare(col.sql).run();
+                    console.log(`Migration Success: Added ${col.name} column`);
+                }
+            });
+        } catch (e) {
+            console.error("Migration Error (actor profile fields):", e);
+        }
+
         // 建立資料表
         db.exec(`
             CREATE TABLE IF NOT EXISTS tag_groups (
@@ -117,7 +136,11 @@ function initDB() {
                 image_path TEXT,
                 created_at INTEGER,
                 is_deleted INTEGER DEFAULT 0,
-                is_favorite INTEGER DEFAULT 0
+                is_favorite INTEGER DEFAULT 0,
+                birthdate TEXT,
+                sizes TEXT,
+                av_period TEXT,
+                name_reading TEXT
             );
             CREATE TABLE IF NOT EXISTS work_actor_link (
                 work_id INTEGER,

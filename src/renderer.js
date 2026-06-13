@@ -353,6 +353,13 @@ function App() {
         setAppliedFilters(empty);
     };
 
+    const handleNavigateToWorkDetails = (workId) => {
+        pushHistory();
+        setSelectedWorkId(workId);
+        setActiveTab('works');
+        setViewMode('details');
+    };
+
     const handleActorQuickSearch = (actor) => {
         pushHistory();
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
@@ -441,7 +448,7 @@ function App() {
                 <${TagSystem} canGoBack=${navHistory.length > 0} onGoBack=${goBack} />
             </div>
             <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'actors' ? 'block' : 'none' }}>
-                <${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch}
+                <${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} onNavigateToWorkDetails=${handleNavigateToWorkDetails}
                     uiFilters=${actorUiFilters} setUiFilters=${setActorUiFilters}
                     appliedFilters=${actorAppliedFilters} setAppliedFilters=${setActorAppliedFilters}
                     sortOrder=${actorSortOrder} setSortOrder=${setActorSortOrder}
