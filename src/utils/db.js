@@ -78,7 +78,8 @@ function initDB() {
                 { name: 'birthdate', sql: "ALTER TABLE actors ADD COLUMN birthdate TEXT" },
                 { name: 'sizes', sql: "ALTER TABLE actors ADD COLUMN sizes TEXT" },
                 { name: 'av_period', sql: "ALTER TABLE actors ADD COLUMN av_period TEXT" },
-                { name: 'name_reading', sql: "ALTER TABLE actors ADD COLUMN name_reading TEXT" }
+                { name: 'name_reading', sql: "ALTER TABLE actors ADD COLUMN name_reading TEXT" },
+                { name: 'tags', sql: "ALTER TABLE actors ADD COLUMN tags TEXT" }
             ];
             newCols.forEach(col => {
                 if (!tableInfo.some(c => c.name === col.name)) {
@@ -140,7 +141,8 @@ function initDB() {
                 birthdate TEXT,
                 sizes TEXT,
                 av_period TEXT,
-                name_reading TEXT
+                name_reading TEXT,
+                tags TEXT
             );
             CREATE TABLE IF NOT EXISTS work_actor_link (
                 work_id INTEGER,

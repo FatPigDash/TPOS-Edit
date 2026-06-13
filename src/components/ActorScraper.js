@@ -147,9 +147,34 @@ function collectLabelValuePairs(doc) {
     return pairs;
 }
 
+// 從個人檔案表格取出「タグ」欄位的標籤清單
+function extractTags(doc) {
+    const rows = Array.from(doc.querySelectorAll('tr'));
+    for (const tr of rows) {
+        const cells = Array.from(tr.querySelectorAll('td, th'));
+        if (!cells.length) continue;
+        const firstText = (cells[0].textContent || '').replace(/ /g, ' ').trim();
+        if (firstText !== 'タグ' && firstText.indexOf('タグ') !== 0) continue;
+
+        const container = cells.length >= 2 ? cells[cells.length - 1] : cells[0];
+        // 優先取標籤連結 (href 含 tag_a_id)
+        let anchors = Array.from(container.querySelectorAll('a'))
+            .filter(a => /tag_a_id=/.test(a.getAttribute('href') || ''));
+        if (!anchors.length) anchors = Array.from(container.querySelectorAll('a'));
+        let tags = anchors.map(a => (a.textContent || '').trim()).filter(t => t && t !== 'タグ');
+        if (!tags.length) {
+            // 後備: 直接切分值文字
+            const v = (container.textContent || '').replace(/^\s*タグ/, '').trim();
+            tags = v.split(/[\s,、]+/).map(s => s.trim()).filter(s => s);
+        }
+        return [...new Set(tags)];
+    }
+    return [];
+}
+
 // 解析演員頁 HTML, 取出檔案資料
 function parseProfile(htmlBody) {
-    const result = { name_reading: '', aliases: [], birthdate: '', sizes: '', av_period: '', image_url: '' };
+    const result = { name_reading: '', aliases: [], birthdate: '', sizes: '', av_period: '', image_url: '', tags: [] };
     let doc;
     try { doc = new DOMParser().parseFromString(htmlBody, 'text/html'); } catch (e) { return result; }
 
@@ -190,6 +215,10 @@ function parseProfile(htmlBody) {
             result.av_period = cleanValue(value);
         }
     }
+
+    // タグ (標籤清單)
+    result.tags = extractTags(doc);
+
     return result;
 }
 

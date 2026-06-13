@@ -42,9 +42,11 @@ async function scrapeAndUpdateActor(actor) {
         const sizes = d.sizes || actor.sizes || null;
         const avPeriod = d.av_period || actor.av_period || null;
         const nameReading = d.name_reading || actor.name_reading || null;
+        // タグ: 直接以抓取結果覆蓋 (去重)
+        const tagsStr = [...new Set((d.tags || []).map(t => (t || '').trim()).filter(s => s))].join(',');
 
-        db.prepare('UPDATE actors SET aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ? WHERE id = ?')
-            .run(aliasesStr, birthdate, sizes, avPeriod, nameReading, actor.id);
+        db.prepare('UPDATE actors SET aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ? WHERE id = ?')
+            .run(aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, actor.id);
 
         // 圖片: 僅在原本沒有圖片時才下載
         let imageUpdated = false;
@@ -139,6 +141,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
     const [birthdate, setBirthdate] = React.useState("");
     const [sizes, setSizes] = React.useState("");
     const [avPeriod, setAvPeriod] = React.useState("");
+    const [tags, setTags] = React.useState("");
     const [actorNumber, setActorNumber] = React.useState("");
     const [image, setImage] = React.useState(null);
     const [originalImage, setOriginalImage] = React.useState(null);
@@ -167,6 +170,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setBirthdate(actor.birthdate || "");
                 setSizes(actor.sizes || "");
                 setAvPeriod(actor.av_period || "");
+                setTags(actor.tags || "");
                 setActorNumber(actor.actor_number);
                 let imgState = null;
                 if (actor.image_path) {
@@ -176,14 +180,15 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setImage(imgState);
                 setOriginalImage(actor.image_path);
                 setIsFavorite(actor.is_favorite || 0);
-                setInitialState({ name: actor.name, aliases: cleanAliases(splitAliases(actor.aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", image: imgState, isFavorite: actor.is_favorite || 0 });
+                setInitialState({ name: actor.name, aliases: cleanAliases(splitAliases(actor.aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", tags: actor.tags || "", image: imgState, isFavorite: actor.is_favorite || 0 });
             }
         } else {
             const num = getNewActorNumber(db);
             setActorNumber(num);
             setIsFavorite(0);
             setAliasItems([""]);
-            setInitialState({ name: '', aliases: '', birthdate: '', sizes: '', avPeriod: '', image: null, isFavorite: 0 });
+            setTags("");
+            setInitialState({ name: '', aliases: '', birthdate: '', sizes: '', avPeriod: '', tags: '', image: null, isFavorite: 0 });
         }
     }, [actorId]);
 
@@ -201,7 +206,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     const isDirty = () => {
         if (!initialState) return false;
-        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.aliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
+        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.aliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || tags !== initialState.tags || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
     };
 
     const attemptClose = () => { if (isDirty()) setShowDirtyWarning(true); else onClose(); };
@@ -245,10 +250,11 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                     const bd = birthdate.trim() || null;
                     const sz = sizes.trim() || null;
                     const avp = avPeriod.trim() || null;
+                    const tg = tags.trim() || null;
                     if (isEdit) {
-                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, bd, sz, avp, actorId);
+                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ?, tags = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, bd, sz, avp, tg, actorId);
                     } else {
-                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite, birthdate, sizes, av_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite, bd, sz, avp);
+                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite, birthdate, sizes, av_period, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite, bd, sz, avp, tg);
                         currentId = info.lastInsertRowid;
                     }
 
@@ -314,6 +320,10 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 <div className="filter-group">
                     <label className="filter-label">AV出演期間</label>
                     <input className="filter-input" value=${avPeriod} onInput=${e => setAvPeriod(e.target.value)} placeholder="例如: 2015年 ～" />
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">タグ <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(以逗號區隔)</span></label>
+                    <input className="filter-input" value=${tags} onInput=${e => setTags(e.target.value)} placeholder="例如: 巨乳, 美乳, 芸能人" />
                 </div>
                 <div className="filter-group">
                     <label className="filter-label">關注演員</label>
@@ -574,6 +584,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     const hasImg = imgSrc && !imageError;
 
     const aliasList = actor.aliases ? actor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+    const tagList = actor.tags ? actor.tags.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
 
     const labelStyle = { width: '110px', flexShrink: 0, color: '#888', fontSize: '14px', fontWeight: 'bold' };
     const rowStyle = { display: 'flex', alignItems: 'flex-start', padding: '10px 0', borderBottom: '1px solid #f0f0f0' };
@@ -624,6 +635,16 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                             <div style=${rowStyle}><span style=${labelStyle}>生年月日</span><div style=${{ flex: 1 }}>${actor.birthdate || html`<span style=${emptyStyle}>—</span>`}</div></div>
                             <div style=${rowStyle}><span style=${labelStyle}>サイズ</span><div style=${{ flex: 1 }}>${actor.sizes || html`<span style=${emptyStyle}>—</span>`}</div></div>
                             <div style=${rowStyle}><span style=${labelStyle}>AV出演期間</span><div style=${{ flex: 1 }}>${actor.av_period || html`<span style=${emptyStyle}>—</span>`}</div></div>
+                            <div style=${rowStyle}>
+                                <span style=${labelStyle}>タグ</span>
+                                <div style=${{ flex: 1 }}>
+                                    ${tagList.length > 0
+                                        ? html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                            ${tagList.map((t, i) => html`<span key=${i} style=${{ fontSize: '13px', padding: '2px 10px', borderRadius: '12px', backgroundColor: '#eef2f7', color: '#445' }}>${t}</span>`)}
+                                        </div>`
+                                        : html`<span style=${emptyStyle}>—</span>`}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
