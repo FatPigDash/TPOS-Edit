@@ -311,14 +311,9 @@ function FileOrganizerSystem({ canGoBack, onGoBack }) {
             indexRef.current = -1;
             const win = scraperWinRef.current;
             if (win && !win.isDestroyed()) {
-                try {
-                    win.webContents.executeJavaScript(`
-                        document.title = document.title.replace('TPOS_GRAB_ACTION', '');
-                        const btn = document.getElementById('tpos-grab-btn');
-                        if (btn) { btn.innerHTML = '全部處理完成'; btn.style.background = '#28a745'; }
-                    `);
-                } catch (e) { }
+                try { win.close(); } catch (e) { }
             }
+            scraperWinRef.current = null;
             return;
         }
 
