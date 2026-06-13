@@ -7,7 +7,7 @@ const { webUtils, ipcRenderer } = require('electron');
 const {
     Search, ChevronDown, ChevronRight: ChevronRightIcon, ChevronLeft: ChevronLeftIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
-    Save, Plus, Trash2, Download, PanelLeft, Bookmark
+    Save, Plus, Trash2, Download, PanelLeft, Bookmark, Play
 } = require('lucide-react');
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
@@ -467,6 +467,53 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
     const [linkedTags, setLinkedTags] = React.useState([]);
     const [viewingActorImage, setViewingActorImage] = React.useState(null);
     const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
+    const [videoCandidates, setVideoCandidates] = React.useState(null); // 多筆影片選擇清單
+    const [isPlaying, setIsPlaying] = React.useState(false);
+
+    // 以 PotPlayer 播放指定路徑
+    const playPath = async (absPath) => {
+        try {
+            const r = await ipcRenderer.invoke('play-video', absPath);
+            if (!r || !r.ok) {
+                if (r && r.reason === 'notfound') {
+                    alert('找不到 PotPlayer。\n請確認已安裝 PotPlayer，或於軟體根目錄的 app.config.json 設定 "potplayerPath" 指向 PotPlayer 執行檔。');
+                } else {
+                    alert('播放失敗: ' + ((r && r.message) || '未知錯誤'));
+                }
+                return;
+            }
+            setVideoCandidates(null);
+        } catch (e) {
+            alert('播放失敗: ' + e.message);
+        }
+    };
+
+    // 點擊播放按鈕: 依識別碼比對根目錄影片
+    const handlePlay = async () => {
+        if (!work || !work.work_number) {
+            alert('此作品沒有識別碼，無法比對影片。');
+            return;
+        }
+        setIsPlaying(true);
+        try {
+            const res = await ipcRenderer.invoke('find-work-videos', { workNumber: work.work_number, name: work.name });
+            const list = (res && res.candidates) || [];
+            if (list.length === 0) {
+                alert(`在軟體根目錄內找不到識別碼為「${work.work_number}」的影片檔。`);
+                return;
+            }
+            if (list.length === 1 || res.unique) {
+                await playPath(list[0].absolutePath);
+                return;
+            }
+            // 多筆且無法唯一判定 -> 彈出清單供選擇
+            setVideoCandidates(list);
+        } catch (e) {
+            alert('搜尋影片失敗: ' + e.message);
+        } finally {
+            setIsPlaying(false);
+        }
+    };
 
     React.useEffect(() => {
         ensureNotesColumn(); // 確保資料庫有 notes 欄位
@@ -585,6 +632,9 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
             <div className="content-area">
                 <div className="content-header">
                     <div className="result-info" style=${{ flex: 1 }}>作品詳情</div>
+                    <button className="btn-primary" onClick=${handlePlay} disabled=${isPlaying} style=${{ marginRight: 8, backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }} title="以 PotPlayer 播放此作品影片">
+                        <${Play} size=${16} style=${{ marginRight: 6 }} /> ${isPlaying ? '搜尋中...' : '播放影片'}
+                    </button>
                     <button className="btn-primary" onClick=${() => onEdit(workId)}><${Edit} size=${16} style=${{ marginRight: 6 }} /> 編輯作品</button>
                 </div>
 
@@ -664,6 +714,29 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
             </div>
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
             ${viewingActorImage && html`<${ImageViewerModal} src=${viewingActorImage} onClose=${() => setViewingActorImage(null)} />`}
+            ${videoCandidates && html`
+                <div style=${{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }} onClick=${() => setVideoCandidates(null)}>
+                    <div style=${{ backgroundColor: 'white', borderRadius: '8px', padding: '20px', width: '600px', maxWidth: '90vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick=${e => e.stopPropagation()}>
+                        <div style=${{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style=${{ margin: 0, flex: 1 }}>找到多個符合「${work.work_number}」的影片，請選擇要播放的檔案</h3>
+                            <button className="btn-ghost" onClick=${() => setVideoCandidates(null)}><${X} size=${20} /></button>
+                        </div>
+                        <div style=${{ overflowY: 'auto', flex: 1 }}>
+                            ${videoCandidates.map((c, idx) => html`
+                                <div key=${idx} onClick=${() => playPath(c.absolutePath)}
+                                    style=${{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 8px', borderBottom: '1px solid #eee', cursor: 'pointer' }}
+                                    title=${c.absolutePath}>
+                                    <${Play} size=${16} color="#28a745" style=${{ flexShrink: 0 }} />
+                                    <div style=${{ minWidth: 0 }}>
+                                        <div style=${{ fontWeight: 'bold', wordBreak: 'break-all' }}>${c.fileName}</div>
+                                        <div style=${{ fontSize: '12px', color: '#888', wordBreak: 'break-all' }}>${c.relativePath}</div>
+                                    </div>
+                                </div>
+                            `)}
+                        </div>
+                    </div>
+                </div>
+            `}
         </div>`;
 }
 

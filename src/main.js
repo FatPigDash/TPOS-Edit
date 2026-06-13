@@ -8,6 +8,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const remoteMain = require('@electron/remote/main');
 const fs = require('fs');
+const { spawn } = require('child_process');
 // 引入 ffmpeg 與 ffprobe 相關套件
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
@@ -138,6 +139,189 @@ ipcMain.handle('get-video-metadata', async (event, filePath) => {
       }
     });
   });
+});
+
+// =============================================================
+// 影片連結與播放功能 (Link & Play)
+// 以軟體所在路徑為根目錄，遞迴掃描影片，依識別碼比對，並以 PotPlayer 播放
+// =============================================================
+
+// 支援的影片副檔名
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.wmv', '.mov', '.ts', '.m2ts', '.flv', '.rmvb', '.webm', '.iso', '.mpg', '.mpeg', '.m4v'];
+// 掃描時略過的資料夾 (避免掃描套件/版控目錄)
+const SKIP_DIR_NAMES = new Set(['node_modules', '.git']);
+
+// 取得軟體所在的根目錄 (打包後為 exe 所在資料夾，開發時為專案根目錄)
+function getAppRoot() {
+  if (app.isPackaged) {
+    return process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
+  }
+  return path.join(__dirname, '..');
+}
+
+// 遞迴掃描根目錄 (含最底層子資料夾) 取得所有影片檔絕對路徑
+function walkVideoFiles(root) {
+  const results = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      continue; // 無權限或讀取失敗則略過該資料夾
+    }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (SKIP_DIR_NAMES.has(ent.name)) continue;
+        stack.push(full);
+      } else if (ent.isFile()) {
+        if (VIDEO_EXTENSIONS.includes(path.extname(ent.name).toLowerCase())) {
+          results.push(full);
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// 正規化識別碼字串供比對 (轉大寫、去空白)
+function normalizeCode(s) {
+  return String(s || '').toUpperCase().replace(/\s+/g, '');
+}
+
+// 取出檔名中所有 [] 內的資訊
+function extractBracketCodes(fileName) {
+  const base = fileName.replace(/\.[^.]+$/, '');
+  const codes = [];
+  const re = /\[([^\]]+)\]/g;
+  let m;
+  while ((m = re.exec(base)) !== null) {
+    const v = m[1].trim();
+    if (v) codes.push(v);
+  }
+  return codes;
+}
+
+// 判斷檔名的 [] 資訊是否符合指定識別碼
+function fileMatchesCode(fileName, workNumber) {
+  const target = normalizeCode(workNumber);
+  if (!target) return false;
+  const targetNoHyphen = target.replace(/-/g, '');
+  return extractBracketCodes(fileName).some(code => {
+    const n = normalizeCode(code);
+    return n === target || n.replace(/-/g, '') === targetNoHyphen;
+  });
+}
+
+// 取得檔名的標題部分 (移除 [] 與整理用後綴) 供與作品名稱比對
+function getTitlePart(fileName) {
+  let base = fileName.replace(/\.[^.]+$/, '');
+  base = base.replace(/\[[^\]]*\]/g, ' ');
+  base = base.replace(/-uncensored-leak|-chinese-subtitle/gi, ' ');
+  return base.toLowerCase().replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// 最長共同子字串長度
+function longestCommonSubstr(a, b) {
+  if (!a || !b) return 0;
+  let max = 0;
+  const dp = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      if (a[i - 1] === b[j - 1]) {
+        dp[j] = prev + 1;
+        if (dp[j] > max) max = dp[j];
+      } else {
+        dp[j] = 0;
+      }
+      prev = tmp;
+    }
+  }
+  return max;
+}
+
+// 計算檔名標題與作品名稱的相似度分數 (0~100)
+function scoreByName(fileName, workName) {
+  const t = getTitlePart(fileName);
+  const n = (workName || '').toLowerCase().replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n || !t) return 0;
+  if (t === n) return 100;
+  if (t.includes(n) || n.includes(t)) return 60;
+  const lcs = longestCommonSubstr(t, n);
+  return Math.round((lcs / Math.max(n.length, 1)) * 40);
+}
+
+// 讀取設定的 PotPlayer 路徑 (環境變數 > 根目錄 app.config.json > 常見安裝路徑)
+function getPotPlayerPath() {
+  if (process.env.TPOS_POTPLAYER && fs.existsSync(process.env.TPOS_POTPLAYER)) {
+    return process.env.TPOS_POTPLAYER;
+  }
+  try {
+    const cfgPath = path.join(getAppRoot(), 'app.config.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      if (cfg.potplayerPath && fs.existsSync(cfg.potplayerPath)) return cfg.potplayerPath;
+    }
+  } catch (e) { /* 忽略設定檔解析錯誤 */ }
+
+  const defaults = [
+    'C:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe',
+    'C:\\Program Files\\DAUM\\PotPlayer\\PotPlayer64.exe',
+    'C:\\Program Files\\DAUM\\PotPlayer\\PotPlayer.exe',
+    'C:\\Program Files (x86)\\DAUM\\PotPlayer\\PotPlayerMini.exe',
+    'C:\\Program Files (x86)\\DAUM\\PotPlayer\\PotPlayer.exe',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'DAUM', 'PotPlayer', 'PotPlayerMini64.exe') : null
+  ].filter(Boolean);
+  for (const p of defaults) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// IPC: 依識別碼 (work_number) 與作品名稱尋找根目錄內符合的影片
+ipcMain.handle('find-work-videos', async (event, { workNumber, name }) => {
+  const root = getAppRoot();
+  if (!workNumber) return { root, candidates: [], unique: false };
+
+  const all = walkVideoFiles(root);
+  const matched = all
+    .filter(full => fileMatchesCode(path.basename(full), workNumber))
+    .map(full => ({
+      fileName: path.basename(full),
+      relativePath: path.relative(root, full),
+      absolutePath: full,
+      score: scoreByName(path.basename(full), name)
+    }));
+
+  matched.sort((a, b) => b.score - a.score || a.relativePath.localeCompare(b.relativePath));
+
+  // 是否能唯一判定: 最高分需大於 0 且嚴格高於第二名
+  const unique = matched.length > 0 && matched[0].score > 0 &&
+    (matched.length === 1 || matched[0].score > matched[1].score);
+
+  return { root, candidates: matched, unique };
+});
+
+// IPC: 以 PotPlayer 播放指定影片
+ipcMain.handle('play-video', async (event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { ok: false, message: '影片檔不存在或已被移動' };
+    }
+    const exe = getPotPlayerPath();
+    if (!exe) return { ok: false, reason: 'notfound' };
+
+    const child = spawn(exe, [filePath], { detached: true, stdio: 'ignore' });
+    child.on('error', (err) => console.error('PotPlayer 啟動失敗:', err.message));
+    child.unref();
+    return { ok: true, player: exe };
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
 });
 
 app.whenReady().then(() => {
