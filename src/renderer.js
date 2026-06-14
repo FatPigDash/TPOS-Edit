@@ -24,6 +24,13 @@ const { ActorSystem } = require('./components/ActorSystem');
 const { FileOrganizerSystem } = require('./components/FileOrganizer');
 const { VideoImportSystem } = require('./components/VideoImport');
 
+// 反轉排序方向 (asc <-> desc)
+const toggleSortDirection = (order) => {
+    if (order.endsWith('_asc')) return order.slice(0, -4) + '_desc';
+    if (order.endsWith('_desc')) return order.slice(0, -5) + '_asc';
+    return order;
+};
+
 // 9. 主程式進入點 (App & Main)
 
 function App() {
@@ -221,6 +228,18 @@ function App() {
                     orderByClause = 'w.rating DESC, w.created_at DESC';
                 } else if (sortOrder === 'name_asc') {
                     orderByClause = 'w.name ASC';
+                } else if (sortOrder === 'name_desc') {
+                    orderByClause = 'w.name DESC';
+                } else if (sortOrder === 'code_desc') {
+                    orderByClause = 'w.work_number DESC';
+                } else if (sortOrder === 'rating_asc') {
+                    orderByClause = 'w.rating ASC, w.created_at DESC';
+                } else if (sortOrder === 'created_asc') {
+                    orderByClause = 'w.created_at ASC';
+                } else if (sortOrder === 'release_date_desc') {
+                    orderByClause = 'w.release_date DESC, w.created_at DESC';
+                } else if (sortOrder === 'release_date_asc') {
+                    orderByClause = 'w.release_date ASC, w.created_at DESC';
                 }
 
                 // 修改查詢: 增加 fav_actor_count 欄位，用於判斷是否顯示「關注演員」圖示
@@ -433,12 +452,20 @@ function App() {
                                 </div>
                                 <div style=${{ display: 'flex', alignItems: 'flex-start' }}>
                                     <div style=${{ display: 'flex', alignItems: 'center', backgroundColor: '#f5f5f5', padding: '4px', borderRadius: '6px' }}>
-                                        <${ArrowUpDown} size=${16} color="#666" style=${{ margin: '0 8px' }} />
+                                        <button className="btn-ghost" onClick=${() => { pushHistory(); setSortOrder(toggleSortDirection(sortOrder)); }} title="反轉排序順序" style=${{ display: 'flex', alignItems: 'center', padding: '4px', margin: '0 4px' }}>
+                                            <${ArrowUpDown} size=${16} color="#666" />
+                                        </button>
                                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px', border: 'none', backgroundColor: 'transparent', fontWeight: 'bold' }} value=${sortOrder} onChange=${e => { pushHistory(); setSortOrder(e.target.value); }}>
                                             <option value="created_desc">新增時間 (新 → 舊)</option>
+                                            <option value="created_asc">新增時間 (舊 → 新)</option>
                                             <option value="code_asc">識別碼 (A → Z)</option>
+                                            <option value="code_desc">識別碼 (Z → A)</option>
                                             <option value="name_asc">作品名稱 (A → Z)</option>
+                                            <option value="name_desc">作品名稱 (Z → A)</option>
                                             <option value="rating_desc">評分 (高 → 低)</option>
+                                            <option value="rating_asc">評分 (低 → 高)</option>
+                                            <option value="release_date_desc">發行日期 (新 → 舊)</option>
+                                            <option value="release_date_asc">發行日期 (舊 → 新)</option>
                                         </select>
                                         <button className="btn-ghost" onClick=${handleBatchMoveId} title="將識別碼從名稱開頭移至尾端" style=${{ padding: '6px 10px', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #ddd' }}>
                                             <${FileText} size=${16} />

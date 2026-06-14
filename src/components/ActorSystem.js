@@ -7,8 +7,15 @@ const { webUtils } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
     Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, ArrowLeft,
-    Globe, Loader2, StopCircle
+    Globe, Loader2, StopCircle, ArrowUpDown
 } = require('lucide-react');
+
+// 反轉排序方向 (asc <-> desc)
+const toggleSortDirection = (order) => {
+    if (order.endsWith('_asc')) return order.slice(0, -4) + '_desc';
+    if (order.endsWith('_desc')) return order.slice(0, -5) + '_asc';
+    return order;
+};
 
 const { db, actorsImgDir } = require('../utils/db');
 // 引入 findSmartMatchActor 與 parseNameWithAliases
@@ -1158,6 +1165,9 @@ function ActorSystem({
                                 </div>
                             `}
                         </div>
+                        <button className="btn-ghost" onClick=${() => { pushHistory && pushHistory(); setSortOrder(toggleSortDirection(sortOrder)); }} title="反轉排序順序" disabled=${viewMode === 'duplicates'} style=${{ display: 'flex', alignItems: 'center', padding: '4px', marginRight: '4px' }}>
+                            <${ArrowUpDown} size=${16} color="#666" />
+                        </button>
                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => { pushHistory && pushHistory(); setSortOrder(e.target.value); }} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
