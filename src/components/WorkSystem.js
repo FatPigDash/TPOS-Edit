@@ -624,7 +624,7 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
             </div>
 
             <div className="content-area">
-                <div className="content-header">
+                <div className="content-header" style=${{ position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 2 }}>
                     ${canGoBack && html`
                         <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ marginRight: '8px', padding: '4px', display: 'flex', alignItems: 'center' }}>
                             <${ArrowLeft} size=${20} />
@@ -1068,7 +1068,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 </div>
             </div>
             <div className="content-area">
-                <div className="content-header">
+                <div className="content-header" style=${{ position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 2 }}>
                     <div className="result-info">${isEditMode ? '編輯作品' : '新增作品'}</div>
                     <div style=${{ display: 'flex', gap: '8px' }}>
                         <button className="btn-primary" onClick=${handleSave}><${Save} size=${16} style=${{ marginRight: 4 }} /> 儲存</button>
