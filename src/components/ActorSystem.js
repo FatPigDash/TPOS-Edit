@@ -799,13 +799,13 @@ function ActorSystem({
     currentPage, setCurrentPage,
     contentRef, onContentScroll,
     canGoBack, onGoBack,
-    pushHistory, isRestoringRef
+    pushHistory, isRestoringRef,
+    detailActorId, setDetailActorId, isDetailFromExternalNav
 }) {
     const ITEMS_PER_PAGE = 24;
     const [actors, setActors] = React.useState([]);
 
     const [editingActorId, setEditingActorId] = React.useState(null);
-    const [detailActorId, setDetailActorId] = React.useState(null);
     const [mergingActor, setMergingActor] = React.useState(null);
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const [viewingImage, setViewingImage] = React.useState(null);
@@ -1092,7 +1092,7 @@ function ActorSystem({
     if (detailActorId) {
         return html`<${ActorDetail}
             actorId=${detailActorId}
-            onBack=${() => setDetailActorId(null)}
+            onBack=${() => isDetailFromExternalNav ? onGoBack() : setDetailActorId(null)}
             onNavigateToWorkDetails=${onNavigateToWorkDetails}
             setIsLoading=${setIsLoading}
         />`;

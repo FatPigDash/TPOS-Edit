@@ -53,6 +53,8 @@ function App() {
     const [actorSortOrder, setActorSortOrder] = React.useState('number_desc');
     const [actorViewMode, setActorViewMode] = React.useState('normal'); // 'normal' | 'duplicates'
     const [actorCurrentPage, setActorCurrentPage] = React.useState(1);
+    const [actorDetailId, setActorDetailId] = React.useState(null);
+    const [actorDetailFromWork, setActorDetailFromWork] = React.useState(false);
 
     // 記住作品列表的捲動位置，返回列表時還原 (避免每次都跳回頂部)
     const listContentRef = React.useRef(null);
@@ -89,7 +91,7 @@ function App() {
             },
             actors: {
                 uiFilters: actorUiFilters, appliedFilters: actorAppliedFilters, sortOrder: actorSortOrder,
-                currentPage: actorCurrentPage, viewMode: actorViewMode,
+                currentPage: actorCurrentPage, viewMode: actorViewMode, detailActorId: actorDetailId,
                 scrollTop: actorScrollPosRef.current
             }
         };
@@ -122,6 +124,8 @@ function App() {
         setActorSortOrder(snap.actors.sortOrder);
         setActorCurrentPage(snap.actors.currentPage);
         setActorViewMode(snap.actors.viewMode);
+        setActorDetailId(snap.actors.detailActorId ?? null);
+        setActorDetailFromWork(false);
         actorScrollPosRef.current = snap.actors.scrollTop;
 
         setRestoreVersion(v => v + 1);
@@ -360,6 +364,13 @@ function App() {
         setViewMode('details');
     };
 
+    const handleNavigateToActorDetails = (actorId) => {
+        pushHistory();
+        setActorDetailId(actorId);
+        setActorDetailFromWork(true);
+        setActiveTab('actors');
+    };
+
     const handleActorQuickSearch = (actor) => {
         pushHistory();
         const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
@@ -396,6 +407,7 @@ function App() {
                             onApply=${() => { pushHistory(); setAppliedFilters({ ...uiFilters }); setViewMode('list'); }}
                             onClear=${handleClearFilter}
                             onEdit=${(id) => { pushHistory(); setSelectedWorkId(id); setViewMode('edit'); }}
+                            onNavigateToActor=${handleNavigateToActorDetails}
                             canGoBack=${navHistory.length > 0} onGoBack=${goBack} />` :
                     html`<div className="main-layout">
                         ${isSidebarOpen && html`<${WorkSidebar} uiFilters=${uiFilters} setUiFilters=${setUiFilters} onApply=${() => { pushHistory(); setAppliedFilters({ ...uiFilters }); }} onClear=${handleClearFilter} />`}
@@ -457,6 +469,9 @@ function App() {
                     contentRef=${actorContentRef} onContentScroll=${e => { actorScrollPosRef.current = e.target.scrollTop; }}
                     canGoBack=${navHistory.length > 0} onGoBack=${goBack}
                     pushHistory=${pushHistory} isRestoringRef=${isRestoringRef}
+                    detailActorId=${actorDetailId}
+                    setDetailActorId=${(id) => { setActorDetailId(id); setActorDetailFromWork(false); }}
+                    isDetailFromExternalNav=${actorDetailFromWork}
                 />
             </div>
             <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'fileOrganizer' ? 'block' : 'none' }}>

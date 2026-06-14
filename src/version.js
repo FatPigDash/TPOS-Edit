@@ -5,6 +5,6 @@
 module.exports = {
   appName: "The Pile of Shame",
   appAbbr: "TPOS",
-  displayVersion: "V6.4.0",
-  fullTitle: "The Pile of Shame (V6.4.0)"
+  displayVersion: "V7.0.0",
+  fullTitle: "The Pile of Shame (V7.0.0)"
 };

@@ -458,14 +458,13 @@ function parseTimeToSeconds(timeStr) {
     return null;
 }
 
-function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear, canGoBack, onGoBack }) {
+function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear, canGoBack, onGoBack, onNavigateToActor }) {
     const [work, setWork] = React.useState(null);
     const [images, setImages] = React.useState([]);
     const [previewIndex, setPreviewIndex] = React.useState(0);
     const [viewingImage, setViewingImage] = React.useState(null);
     const [linkedActors, setLinkedActors] = React.useState([]);
     const [linkedTags, setLinkedTags] = React.useState([]);
-    const [viewingActorImage, setViewingActorImage] = React.useState(null);
     const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
     const [videoCandidates, setVideoCandidates] = React.useState(null); // 多筆影片選擇清單
     const [isPlaying, setIsPlaying] = React.useState(false);
@@ -604,11 +603,6 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                     <button className="btn-ghost" onClick=${() => setIsFilterSidebarOpen(!isFilterSidebarOpen)} title=${isFilterSidebarOpen ? "隱藏側邊欄" : "顯示側邊欄"} style=${{ marginRight: '8px', padding: '4px' }}>
                         <${PanelLeft} size=${20} />
                     </button>
-                    ${canGoBack && html`
-                        <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ marginRight: '8px', padding: '4px', display: 'flex', alignItems: 'center' }}>
-                            <${ArrowLeft} size=${20} />
-                        </button>
-                    `}
                     <h3 style=${{ margin: 0 }}>作品預覽</h3>
                 </div>
                 <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -631,6 +625,11 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
 
             <div className="content-area">
                 <div className="content-header">
+                    ${canGoBack && html`
+                        <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ marginRight: '8px', padding: '4px', display: 'flex', alignItems: 'center' }}>
+                            <${ArrowLeft} size=${20} />
+                        </button>
+                    `}
                     <div className="result-info" style=${{ flex: 1 }}>作品詳情</div>
                     <button className="btn-primary" onClick=${handlePlay} disabled=${isPlaying} style=${{ marginRight: 8, backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }} title="以 PotPlayer 播放此作品影片">
                         <${Play} size=${16} style=${{ marginRight: 6 }} /> ${isPlaying ? '搜尋中...' : '播放影片'}
@@ -656,22 +655,21 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
         const isRealActor = !!actor.actor_id;
         const isMissingImage = isRealActor && !actor.image_path;
 
-        return html`<span 
+        return html`<span
                                     style=${{
                 padding: '4px 8px',
                 borderRadius: '4px',
-                backgroundColor: isMissingImage ? '#fff3cd' : '#e3f2fd',
-                color: isMissingImage ? '#856404' : (isRealActor ? '#2196F3' : '#333'),
+                backgroundColor: '#e3f2fd',
+                color: isRealActor ? '#2196F3' : '#333',
                 cursor: isRealActor ? 'pointer' : 'default',
                 textDecoration: isRealActor ? 'underline' : 'none',
                 fontWeight: isRealActor ? 'bold' : 'normal',
                 display: 'inline-flex',
                 alignItems: 'center'
-            }} 
-                                    onClick=${() => isRealActor && actor.image_path && setViewingActorImage(getFileUrl(path.join(actorsImgDir, actor.image_path)))} 
+            }}
+                                    onClick=${() => isRealActor && onNavigateToActor && onNavigateToActor(actor.actor_id)}
                                     onMouseDown=${(e) => handleMiddleClickActor(e, actor)}
                                     title=${isRealActor ? `${actor.actor_number} ${isMissingImage ? '(無圖片) ' : ''}(中鍵點擊加入篩選)` : '純文字標籤'}>
-                                    ${isMissingImage && html`<span style=${{ color: '#dc3545', fontWeight: 'bold', marginRight: '4px', textDecoration: 'none' }}>!</span>`}
                                     ${actor.name}
                                 </span>`;
     })}
@@ -713,7 +711,6 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                 </div>
             </div>
             ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
-            ${viewingActorImage && html`<${ImageViewerModal} src=${viewingActorImage} onClose=${() => setViewingActorImage(null)} />`}
             ${videoCandidates && html`
                 <div style=${{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }} onClick=${() => setVideoCandidates(null)}>
                     <div style=${{ backgroundColor: 'white', borderRadius: '8px', padding: '20px', width: '600px', maxWidth: '90vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick=${e => e.stopPropagation()}>
