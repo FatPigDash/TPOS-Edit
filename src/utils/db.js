@@ -91,6 +91,18 @@ function initDB() {
             console.error("Migration Error (actor profile fields):", e);
         }
 
+        // V1.7.0 更新: 新增 actors 表的 scrape_failed 欄位 (資料抓取失敗標記)
+        try {
+            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
+            const hasScrapeFailed = tableInfo.some(col => col.name === 'scrape_failed');
+            if (!hasScrapeFailed) {
+                db.prepare("ALTER TABLE actors ADD COLUMN scrape_failed INTEGER DEFAULT 0").run();
+                console.log("Migration Success: Added scrape_failed column");
+            }
+        } catch (e) {
+            console.error("Migration Error (scrape_failed):", e);
+        }
+
         // 建立資料表
         db.exec(`
             CREATE TABLE IF NOT EXISTS tag_groups (
@@ -142,7 +154,8 @@ function initDB() {
                 sizes TEXT,
                 av_period TEXT,
                 name_reading TEXT,
-                tags TEXT
+                tags TEXT,
+                scrape_failed INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS work_actor_link (
                 work_id INTEGER,

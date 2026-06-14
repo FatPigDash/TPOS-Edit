@@ -39,7 +39,7 @@ async function applyScrapedData(actor, d) {
         // 名稱: 移除括號內的別名 (別名已存於別名欄位); 若清理後為空則保留原名
         const cleanedName = cleanSearchName(actor.name) || actor.name;
 
-        db.prepare('UPDATE actors SET name = ?, aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ? WHERE id = ?')
+        db.prepare('UPDATE actors SET name = ?, aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ?, scrape_failed = 0 WHERE id = ?')
             .run(cleanedName, aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, actor.id);
 
         // 圖片: 僅在原本沒有圖片時才下載
@@ -67,10 +67,18 @@ async function scrapeAndUpdateActor(actor) {
     try {
         res = await scrapeActorByName(actor.name);
     } catch (e) {
+        try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e2) { }
         return { status: 'error', message: e.message };
     }
-    if (!res.success) return { status: 'notfound', message: res.message };
-    return applyScrapedData(actor, res.data);
+    if (!res.success) {
+        try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e) { }
+        return { status: 'notfound', message: res.message };
+    }
+    const result = await applyScrapedData(actor, res.data);
+    if (result.status !== 'updated') {
+        try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e) { }
+    }
+    return result;
 }
 
 // 6. 演員系統元件 (Actor System)
@@ -530,6 +538,14 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         setPage(1);
     }, [actorId]);
 
+    // 標記/取消標記此演員的資料抓取失敗狀態
+    const markScrapeFailed = (failed) => {
+        try {
+            db.prepare('UPDATE actors SET scrape_failed = ? WHERE id = ?').run(failed ? 1 : 0, actorId);
+            reloadActor();
+        } catch (e) { console.error(e); }
+    };
+
     // 抓取此演員資訊 (minnano-av); 多筆候選時讓使用者選擇
     const handleScrapeThis = async () => {
         if (!actor || scraping) return;
@@ -538,15 +554,17 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
             const res = await lookupActress(actor.name);
             if (res.type === 'none') {
                 alert('在 minnano-av 找不到此演員的資料。');
+                markScrapeFailed(true);
             } else if (res.type === 'single') {
                 const r = await applyScrapedData(actor, parseProfile(res.body));
                 if (r.status === 'updated') reloadActor();
-                else alert('抓取失敗: ' + (r.message || '未知錯誤'));
+                else { alert('抓取失敗: ' + (r.message || '未知錯誤')); markScrapeFailed(true); }
             } else if (res.type === 'multiple') {
                 setCandidates(res.candidates);
             }
         } catch (e) {
             alert('抓取失敗: ' + e.message);
+            markScrapeFailed(true);
         }
         setScraping(false);
     };
@@ -562,7 +580,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
             const r = await applyScrapedData(actor, parseProfile(res.body));
             setCandidates(null);
             if (r.status === 'updated') reloadActor();
-            else alert('抓取失敗: ' + (r.message || '未知錯誤'));
+            else { alert('抓取失敗: ' + (r.message || '未知錯誤')); markScrapeFailed(true); }
         } else if (res.type === 'multiple') {
             setCandidates(res.candidates);
         }
@@ -577,9 +595,10 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
             const r = await scrapeActressUrl(c.url);
             const applied = await applyScrapedData(actor, r.data);
             if (applied.status === 'updated') reloadActor();
-            else alert('抓取失敗: ' + (applied.message || '未知錯誤'));
+            else { alert('抓取失敗: ' + (applied.message || '未知錯誤')); markScrapeFailed(true); }
         } catch (e) {
             alert('抓取失敗: ' + e.message);
+            markScrapeFailed(true);
         }
         setScraping(false);
     };
@@ -678,6 +697,12 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                             <${Star} size=${22} fill=${actor.is_favorite ? "#fbc02d" : "none"} color=${actor.is_favorite ? "#fbc02d" : "#ccc"} />
                             <span style=${{ marginLeft: '8px', color: actor.is_favorite ? '#fbc02d' : '#666', fontWeight: actor.is_favorite ? 'bold' : 'normal' }}>${actor.is_favorite ? '已關注' : '未關注'}</span>
                         </div>
+                        ${actor.scrape_failed ? html`
+                            <div style=${{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', color: '#dc3545' }}>
+                                <${AlertTriangle} size=${18} />
+                                <span style=${{ marginLeft: '6px', fontWeight: 'bold' }}>資料抓取失敗</span>
+                            </div>
+                        ` : ''}
                     </div>
                     <div style=${{ flex: 1, minWidth: '280px' }}>
                         <div style=${{ fontSize: '30px', fontWeight: 'bold', color: '#222', marginBottom: '16px', lineHeight: 1.3 }}>
@@ -822,7 +847,6 @@ function ActorSystem({
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
     const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled, failures }
-    const [showFailures, setShowFailures] = React.useState(false);
     const [showScrapeMenu, setShowScrapeMenu] = React.useState(false);
     const scrapeCancelRef = React.useRef(false);
     const scrapeMenuRef = React.useRef(null);
@@ -899,20 +923,7 @@ function ActorSystem({
                         }
                     }
                     if (appliedFilters.isFavorite) conditions.push("is_favorite = 1");
-                    if (appliedFilters.scrapeFailed) {
-                        // 依保存的失敗清單 (localStorage) 篩出抓取失敗的演員
-                        let failNums = [];
-                        try {
-                            const raw = localStorage.getItem('actorScrapeFailures');
-                            if (raw) failNums = (JSON.parse(raw).items || []).map(it => it.actor_number).filter(Boolean);
-                        } catch (e) { }
-                        if (failNums.length === 0) {
-                            conditions.push('1 = 0'); // 無失敗紀錄 -> 無符合結果
-                        } else {
-                            conditions.push(`actor_number IN (${failNums.map(() => '?').join(',')})`);
-                            params.push(...failNums);
-                        }
-                    }
+                    if (appliedFilters.scrapeFailed) conditions.push("scrape_failed = 1");
 
                     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
                     const total = db.prepare(`SELECT COUNT(*) as count FROM actors ${whereClause}`).get(...params).count;
@@ -1036,7 +1047,10 @@ function ActorSystem({
                 const r = await scrapeAndUpdateActor(actor);
                 if (r.status === 'updated') ok++;
                 else { fail++; reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗'); }
-            } catch (e) { fail++; reason = e.message || '例外錯誤'; }
+            } catch (e) {
+                fail++; reason = e.message || '例外錯誤';
+                try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e2) { }
+            }
             if (reason) failures.push({ actor_number: actor.actor_number, name: actor.name, reason, is_favorite: actor.is_favorite ? 1 : 0 });
             setScrapeProgress({ total: rows.length, current: i + 1, name: actor.name, ok, fail, done: false, failures });
             // 隨機延遲 1.5~3.5 秒, 降低被判定為爬蟲的機率
@@ -1044,11 +1058,6 @@ function ActorSystem({
                 await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
             }
         }
-
-        // 保留失敗清單 (存入 localStorage, 重開軟體仍可查看)
-        try {
-            localStorage.setItem('actorScrapeFailures', JSON.stringify({ time: Date.now(), items: failures }));
-        } catch (e) { }
 
         setScrapeProgress({ total: rows.length, current: rows.length, name: '', ok, fail, done: true, cancelled: scrapeCancelRef.current, failures });
         loadActors();
@@ -1149,9 +1158,6 @@ function ActorSystem({
                                 </div>
                             `}
                         </div>
-                        <button className="btn-block" onClick=${() => setShowFailures(true)} title="查看上次批量抓取的失敗清單" style=${{ display: 'flex', alignItems: 'center' }}>
-                            <${AlertTriangle} size=${16} style=${{ marginRight: 4 }} /> 失敗清單
-                        </button>
                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px' }} value=${sortOrder} onChange=${e => { pushHistory && pushHistory(); setSortOrder(e.target.value); }} disabled=${viewMode === 'duplicates'}>
                             <option value="number_desc">依編號 (由大到小)</option>
                             <option value="number_asc">依編號 (由小到大)</option>
@@ -1186,32 +1192,10 @@ function ActorSystem({
             ${scrapeProgress && html`<${ScrapeProgressModal} progress=${scrapeProgress}
                 onStop=${() => { scrapeCancelRef.current = true; }}
                 onClose=${() => setScrapeProgress(null)} />`}
-            ${showFailures && html`<${ScrapeFailuresModal} onClose=${() => setShowFailures(false)} onUpdated=${loadActors} />`}
         </div>`;
 }
 
-// 將失敗清單組成可複製的純文字 (分關注演員 / 其他)
-function formatFailuresText(items, time) {
-    const favs = items.filter(f => f.is_favorite);
-    const others = items.filter(f => !f.is_favorite);
-    const fmt = (list) => list.length ? list.map((f, i) => `${i + 1}. ${f.actor_number || ''} ${f.name}　-　${f.reason || ''}`).join('\n') : '（無）';
-    const header = '抓取失敗清單' + (time ? ' (' + new Date(time).toLocaleString() + ')' : '') + '\n共 ' + items.length + ' 位';
-    return header + '\n\n【關注演員】(' + favs.length + ')\n' + fmt(favs) + '\n\n【其他】(' + others.length + ')\n' + fmt(others);
-}
-
-// 複製失敗清單到剪貼簿
-function copyFailuresToClipboard(items, time) {
-    const text = formatFailuresText(items, time);
-    try {
-        const { clipboard } = require('electron');
-        clipboard.writeText(text);
-        return true;
-    } catch (e) {
-        try { navigator.clipboard.writeText(text); return true; } catch (e2) { return false; }
-    }
-}
-
-// 失敗清單呈現 (分「關注演員 / 其他」兩區; 供進度視窗與獨立視窗共用)
+// 失敗清單呈現 (分「關注演員 / 其他」兩區; 供進度視窗共用)
 function FailureList({ items }) {
     if (!items || items.length === 0) {
         return html`<div style=${{ color: '#28a745', padding: '12px 0' }}>沒有失敗的項目 🎉</div>`;
@@ -1247,16 +1231,6 @@ function ScrapeProgressModal({ progress, onStop, onClose }) {
     const { total, current, name, ok, fail, done, cancelled } = progress;
     const failures = progress.failures || [];
     const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-    const [copied, setCopied] = React.useState(false);
-
-    const handleCopy = () => {
-        if (copyFailuresToClipboard(failures, Date.now())) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        } else {
-            alert('複製失敗, 請手動選取。');
-        }
-    };
 
     return html`
         <div className="modal-overlay" style=${{ zIndex: 2300 }}>
@@ -1282,152 +1256,14 @@ function ScrapeProgressModal({ progress, onStop, onClose }) {
                         <span style=${{ color: '#dc3545' }}>未更新/失敗: ${fail}</span>
                     </div>
                     ${done && html`
-                        <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <div style=${{ fontWeight: 'bold', fontSize: '14px' }}>失敗清單</div>
-                            ${failures.length > 0 && html`<button className="btn-block" style=${{ padding: '4px 10px', fontSize: '13px' }} onClick=${handleCopy}>${copied ? '已複製!' : '複製清單'}</button>`}
-                        </div>
+                        <div style=${{ fontWeight: 'bold', fontSize: '14px', marginBottom: '8px' }}>失敗清單</div>
                         <${FailureList} items=${failures} />
-                        ${failures.length > 0 && html`<div style=${{ fontSize: '12px', color: '#888', marginTop: '8px' }}>此清單已自動保存, 可於演員資料庫上方「失敗清單」按鈕再次查看。</div>`}
                     `}
                 </div>
                 <div className="modal-footer">
                     ${done
                         ? html`<button className="btn-primary" onClick=${onClose}>關閉</button>`
                         : html`<button className="btn-block" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${onStop}><${StopCircle} size=${16} /> 中止</button>`}
-                </div>
-            </div>
-        </div>`;
-}
-
-// 已保存的失敗清單視窗 (從 localStorage 讀取)
-function ScrapeFailuresModal({ onClose, onUpdated }) {
-    const [data, setData] = React.useState({ time: null, items: [] });
-    const [copied, setCopied] = React.useState(false);
-    const [scanning, setScanning] = React.useState(false);
-    const [scanProgress, setScanProgress] = React.useState(null); // null | { current, total, name }
-    const [lastRemoved, setLastRemoved] = React.useState(null); // null | number
-    const cancelRef = React.useRef(false);
-
-    React.useEffect(() => {
-        try {
-            const raw = localStorage.getItem('actorScrapeFailures');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                setData({ time: parsed.time || null, items: parsed.items || [] });
-            }
-        } catch (e) { }
-    }, []);
-
-    const handleCopy = () => {
-        if (copyFailuresToClipboard(data.items, data.time)) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        } else { alert('複製失敗, 請手動選取。'); }
-    };
-
-    const handleClear = () => {
-        if (!confirm('確定要清除已保存的失敗清單嗎?')) return;
-        try { localStorage.removeItem('actorScrapeFailures'); } catch (e) { }
-        setData({ time: null, items: [] });
-        setLastRemoved(null);
-    };
-
-    // 重新掃描失敗項目: 重抓一次, 成功者自清單移除, 仍失敗者保留
-    const handleRescan = async () => {
-        if (scanning || !db || data.items.length === 0) return;
-        if (!confirm('將重新抓取清單中的 ' + data.items.length + ' 位演員, 已成功的會自動從清單移除。\n\n為避免被封鎖會稍作延遲, 確定要開始嗎?')) return;
-
-        setScanning(true);
-        setLastRemoved(null);
-        cancelRef.current = false;
-        const items = data.items;
-        const stillFail = [];
-
-        for (let i = 0; i < items.length; i++) {
-            if (cancelRef.current) {
-                // 中止: 將尚未掃描的項目原樣保留
-                for (let j = i; j < items.length; j++) stillFail.push(items[j]);
-                break;
-            }
-            const item = items[i];
-            setScanProgress({ current: i + 1, total: items.length, name: item.name });
-
-            let actor = null;
-            try {
-                if (item.actor_number) actor = db.prepare("SELECT * FROM actors WHERE actor_number = ? AND is_deleted = 0").get(item.actor_number);
-                if (!actor && item.name) actor = db.prepare("SELECT * FROM actors WHERE name = ? AND is_deleted = 0").get(item.name);
-            } catch (e) { }
-
-            // 演員已不存在 (例如已刪除) -> 視為移除
-            if (!actor) continue;
-
-            let reason = '';
-            try {
-                const r = await scrapeAndUpdateActor(actor);
-                if (r.status !== 'updated') reason = r.message || (r.status === 'notfound' ? '找不到資料' : '抓取失敗');
-            } catch (e) { reason = e.message || '例外錯誤'; }
-
-            if (reason) stillFail.push({ actor_number: item.actor_number, name: actor.name || item.name, reason, is_favorite: actor.is_favorite ? 1 : 0 });
-
-            if (i < items.length - 1 && !cancelRef.current) {
-                await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 2000)));
-            }
-        }
-
-        const removed = items.length - stillFail.length;
-        const newData = { time: Date.now(), items: stillFail };
-        try { localStorage.setItem('actorScrapeFailures', JSON.stringify(newData)); } catch (e) { }
-        setData(newData);
-        setScanProgress(null);
-        setScanning(false);
-        setLastRemoved(removed);
-        if (removed > 0 && onUpdated) onUpdated();
-    };
-
-    return html`
-        <div className="modal-overlay" style=${{ zIndex: 2300 }}>
-            <div className="modal-content" style=${{ maxWidth: '520px' }} onClick=${stopPropagation}>
-                <div className="modal-header">
-                    <span style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <${AlertTriangle} size=${20} color="#dc3545" /> 抓取失敗清單
-                    </span>
-                    ${!scanning && html`<button className="btn-ghost" onClick=${onClose}><${X} size=${24} /></button>`}
-                </div>
-                <div className="modal-body" style=${{ padding: '16px 0' }}>
-                    <div style=${{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
-                        ${data.time ? '最後更新: ' + new Date(data.time).toLocaleString() : '尚無保存的失敗紀錄'}
-                        ${data.items.length > 0 ? html`　(共 ${data.items.length} 位)` : ''}
-                    </div>
-                    ${scanning && scanProgress && html`
-                        <div style=${{ marginBottom: '10px' }}>
-                            <div style=${{ fontSize: '13px', color: '#2196F3', fontWeight: 'bold', marginBottom: '6px' }}>
-                                重新掃描中 (${scanProgress.current} / ${scanProgress.total})
-                            </div>
-                            <div style=${{ height: '10px', background: '#eee', borderRadius: '5px', overflow: 'hidden' }}>
-                                <div style=${{ width: Math.round((scanProgress.current / scanProgress.total) * 100) + '%', height: '100%', background: '#2196F3', transition: 'width 0.3s' }}></div>
-                            </div>
-                            <div style=${{ fontSize: '12px', color: '#666', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>正在抓取: ${scanProgress.name || '...'}</div>
-                        </div>
-                    `}
-                    ${!scanning && lastRemoved !== null && html`
-                        <div style=${{ marginBottom: '10px', fontSize: '13px', color: lastRemoved > 0 ? '#28a745' : '#666', fontWeight: 'bold' }}>
-                            ${lastRemoved > 0 ? '已移除 ' + lastRemoved + ' 位成功抓取的演員。' : '本次掃描沒有新增成功的項目。'}
-                        </div>
-                    `}
-                    <${FailureList} items=${data.items} />
-                </div>
-                <div className="modal-footer" style=${{ justifyContent: 'space-between', gap: '8px' }}>
-                    ${scanning
-                        ? html`<button className="btn-block" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${() => { cancelRef.current = true; }}><${StopCircle} size=${16} /> 中止掃描</button>`
-                        : html`
-                            <button className="btn-block" onClick=${handleClear} disabled=${data.items.length === 0}>清除紀錄</button>
-                            <div style=${{ display: 'flex', gap: '8px' }}>
-                                <button className="btn-block" onClick=${handleCopy} disabled=${data.items.length === 0}>${copied ? '已複製!' : '複製清單'}</button>
-                                <button className="btn-primary" style=${{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick=${handleRescan} disabled=${data.items.length === 0}>
-                                    <${RefreshCw} size=${16} /> 重新掃描
-                                </button>
-                            </div>
-                        `}
                 </div>
             </div>
         </div>`;
