@@ -6,7 +6,7 @@ const fs = require('fs');
 const { webUtils } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
-    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, Wand2, ArrowLeft,
+    Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, ArrowLeft,
     Globe, Loader2, StopCircle
 } = require('lucide-react');
 
@@ -668,6 +668,16 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                                     : html`<${Users} size=${64} color="#ccc" />`)
                             }
                         </div>
+                        <div style=${{ marginTop: '10px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }} onClick=${() => {
+                            const newStatus = actor.is_favorite ? 0 : 1;
+                            try {
+                                db.prepare('UPDATE actors SET is_favorite = ? WHERE id = ?').run(newStatus, actorId);
+                                reloadActor();
+                            } catch (e) { console.error(e); }
+                        }}>
+                            <${Star} size=${22} fill=${actor.is_favorite ? "#fbc02d" : "none"} color=${actor.is_favorite ? "#fbc02d" : "#ccc"} />
+                            <span style=${{ marginLeft: '8px', color: actor.is_favorite ? '#fbc02d' : '#666', fontWeight: actor.is_favorite ? 'bold' : 'normal' }}>${actor.is_favorite ? '已關注' : '未關注'}</span>
+                        </div>
                     </div>
                     <div style=${{ flex: 1, minWidth: '280px' }}>
                         <div style=${{ fontSize: '30px', fontWeight: 'bold', color: '#222', marginBottom: '16px', lineHeight: 1.3 }}>
@@ -888,7 +898,6 @@ function ActorSystem({
                             params.push(...query.params);
                         }
                     }
-                    if (appliedFilters.noImage) conditions.push("(image_path IS NULL OR image_path = '')");
                     if (appliedFilters.isFavorite) conditions.push("is_favorite = 1");
                     if (appliedFilters.scrapeFailed) {
                         // 依保存的失敗清單 (localStorage) 篩出抓取失敗的演員
@@ -957,7 +966,7 @@ function ActorSystem({
 
     const handleClear = () => {
         pushHistory && pushHistory();
-        const empty = { name: '', code: '', noImage: false, isFavorite: false, scrapeFailed: false };
+        const empty = { name: '', code: '', isFavorite: false, scrapeFailed: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
         setViewMode('normal');
@@ -966,53 +975,10 @@ function ActorSystem({
     const handleFindDuplicates = () => {
         pushHistory && pushHistory();
         // 清除其他篩選條件，專注於顯示重複項
-        const empty = { name: '', code: '', noImage: false, isFavorite: false, scrapeFailed: false };
+        const empty = { name: '', code: '', isFavorite: false, scrapeFailed: false };
         setUiFilters(empty);
         setAppliedFilters(empty);
         setViewMode('duplicates');
-    };
-
-    // 新增: 批次處理名稱 (僅提取別名，保留名字)
-    const handleBatchCleanNames = () => {
-        if (!db) return;
-        if (!confirm('確定要執行「自動提取別名」嗎？\n\n系統將掃描所有演員：\n1. 將「名字 (別名)」中的別名提取到別名欄位\n2. 演員的顯示名稱將【維持不變】\n\n此操作涉及大量資料修改。')) return;
-
-        setIsLoading(true);
-        setTimeout(() => {
-            try {
-                let updatedCount = 0;
-                db.transaction(() => {
-                    const allActors = db.prepare('SELECT id, name, aliases FROM actors WHERE is_deleted = 0').all();
-                    
-                    for (const actor of allActors) {
-                        const parsed = parseNameWithAliases(actor.name);
-                        
-                        // 如果有提取出別名 (parsed.aliases 長度 > 0)
-                        if (parsed.aliases.length > 0) {
-                            const currentAliases = actor.aliases ? actor.aliases.split(/[,\uff0c]/).map(s => s.trim()).filter(s => s) : [];
-                            // 計算合併後的別名清單
-                            const mergedAliasesList = [...new Set([...currentAliases, ...parsed.aliases])];
-                            
-                            // 只有當別名數量增加時才更新 (避免重複執行浪費資源)
-                            if (mergedAliasesList.length > currentAliases.length) {
-                                const mergedAliases = mergedAliasesList.join(',');
-                                // 只更新別名，不變更名字
-                                db.prepare('UPDATE actors SET aliases = ? WHERE id = ?').run(mergedAliases, actor.id);
-                                updatedCount++;
-                            }
-                        }
-                    }
-                })();
-                
-                alert(`處理完成！共更新了 ${updatedCount} 位演員的別名資料。`);
-                loadActors(); // 重新整理列表
-            } catch (e) {
-                console.error(e);
-                alert('處理失敗: ' + e.message);
-            } finally {
-                setIsLoading(false);
-            }
-        }, 100);
     };
 
     const handleDelete = (id) => {
@@ -1100,8 +1066,13 @@ function ActorSystem({
 
     return html`
         <div className="main-layout">
-            <div className="sidebar">
-                <h3 style=${{ marginTop: 0, marginBottom: '16px' }}>演員篩選</h3>
+            <div className="sidebar" style=${{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div style=${{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'white', borderBottom: '1px solid #e0e0e0', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    <h3 style=${{ margin: 0, flex: 1, fontSize: '15px' }}>演員篩選</h3>
+                    <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${handleApply} disabled=${viewMode === 'duplicates'}>套用篩選</button>
+                    <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${handleClear}>清除篩選</button>
+                </div>
+                <div style=${{ overflowY: 'auto', padding: '16px', flex: 1 }}>
                 <div className="filter-group">
                     <label className="filter-label">演員姓名</label>
                     <input className="filter-input" value=${uiFilters.name} onInput=${e => setUiFilters({ ...uiFilters, name: e.target.value })} placeholder="搜尋姓名或別名..." disabled=${viewMode === 'duplicates'} />
@@ -1119,29 +1090,19 @@ function ActorSystem({
                 </div>
                 <div className="filter-group">
                     <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                        <input type="checkbox" checked=${uiFilters.noImage} onChange=${e => setUiFilters({ ...uiFilters, noImage: e.target.checked })} style=${{ marginRight: 8 }} disabled=${viewMode === 'duplicates'} />
-                        尚缺圖片
-                    </label>
-                </div>
-                <div className="filter-group">
-                    <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                         <input type="checkbox" checked=${uiFilters.scrapeFailed} onChange=${e => setUiFilters({ ...uiFilters, scrapeFailed: e.target.checked })} style=${{ marginRight: 8 }} disabled=${viewMode === 'duplicates'} />
                         資料抓取失敗
                     </label>
                 </div>
-                <div className="sidebar-actions">
-                    <button className="btn-block" style=${{ flex: 1 }} onClick=${handleApply} disabled=${viewMode === 'duplicates'}>套用篩選</button>
-                    <button className="btn-block" style=${{ flex: 1 }} onClick=${handleClear}>清除篩選</button>
-                </div>
-                
                 <hr style=${{ margin: '16px 0', borderTop: '1px solid #eee' }} />
-                
+
                 <h4 style=${{ margin: '0 0 10px 0', fontSize: '14px', color: '#666' }}>進階功能</h4>
                 <div className="sidebar-actions">
                     <button className=${viewMode === 'duplicates' ? "btn-primary" : "btn-block"} style=${{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${handleFindDuplicates} disabled=${viewMode === 'duplicates'}>
                         <${Zap} size=${16} style=${{ marginRight: 6 }} />
                         尋找相似名稱
                     </button>
+                </div>
                 </div>
             </div>
             <div className="content-area" ref=${contentRef} onScroll=${onContentScroll}>
@@ -1160,7 +1121,7 @@ function ActorSystem({
                     <div style=${{ fontSize: '12px', color: '#666' }}>
                         ${viewMode === 'duplicates' 
                             ? html`模式: 潛在重複分析 (依名稱排序)` 
-                            : html`條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.noImage || appliedFilters.isFavorite || appliedFilters.scrapeFailed ? '篩選中' : '所有演員'}`
+                            : html`條件: ${appliedFilters.name || appliedFilters.code || appliedFilters.isFavorite || appliedFilters.scrapeFailed ? '篩選中' : '所有演員'}`
                         }
                     </div>
                     <div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -1199,9 +1160,6 @@ function ActorSystem({
                             <option value="work_count_desc">依作品數量 (多 → 少)</option>
                             <option value="work_count_asc">依作品數量 (少 → 多)</option>
                         </select>
-                        <button className="btn-ghost" title="批次提取別名 (不修改顯示名稱)" style=${{ padding: '6px' }} onClick=${handleBatchCleanNames} disabled=${viewMode === 'duplicates'}>
-                            <${Wand2} size=${20} />
-                        </button>
                     </div>
                 </div>
                 <div className="card-grid" style=${{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
