@@ -753,6 +753,50 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [initialState, setInitialState] = React.useState(null);
     const [showDirtyWarning, setShowDirtyWarning] = React.useState(false);
     const [isScraperOpen, setIsScraperOpen] = React.useState(false);
+    const [isPlaying, setIsPlaying] = React.useState(false);
+    const [videoCandidates, setVideoCandidates] = React.useState(null);
+
+    const playPath = async (absPath) => {
+        try {
+            const r = await ipcRenderer.invoke('play-video', absPath);
+            if (!r || !r.ok) {
+                if (r && r.reason === 'notfound') {
+                    alert('找不到 PotPlayer。\n請確認已安裝 PotPlayer，或於軟體根目錄的 app.config.json 設定 "potplayerPath" 指向 PotPlayer 執行檔。');
+                } else {
+                    alert('播放失敗: ' + ((r && r.message) || '未知錯誤'));
+                }
+                return;
+            }
+            setVideoCandidates(null);
+        } catch (e) {
+            alert('播放失敗: ' + e.message);
+        }
+    };
+
+    const handlePlay = async () => {
+        if (!formData.work_number) {
+            alert('此作品沒有識別碼，無法比對影片。');
+            return;
+        }
+        setIsPlaying(true);
+        try {
+            const res = await ipcRenderer.invoke('find-work-videos', { workNumber: formData.work_number, name: formData.name });
+            const list = (res && res.candidates) || [];
+            if (list.length === 0) {
+                alert(`在軟體根目錄內找不到識別碼為「${formData.work_number}」的影片檔。`);
+                return;
+            }
+            if (list.length === 1 || res.unique) {
+                await playPath(list[0].absolutePath);
+                return;
+            }
+            setVideoCandidates(list);
+        } catch (e) {
+            alert('搜尋影片失敗: ' + e.message);
+        } finally {
+            setIsPlaying(false);
+        }
+    };
 
     React.useEffect(() => {
         ensureNotesColumn(); // 確保資料庫有 notes 欄位
@@ -1028,6 +1072,24 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     return html`
         ${showDirtyWarning && html`<${ConfirmModal} title="尚未儲存的變更" message="您有尚未儲存的變更, 確定要捨棄嗎?" confirmText="繼續編輯" cancelText="放棄變更" onConfirm=${() => setShowDirtyWarning(false)} onCancel=${onCancel} />`}
         ${isScraperOpen && html`<${ScraperModal} defaultUrl=${formData.work_number || ""} onConfirm=${handleScrapeResult} onClose=${() => setIsScraperOpen(false)} />`}
+        ${videoCandidates && html`
+            <div className="modal-overlay" onClick=${() => setVideoCandidates(null)}>
+                <div className="modal-box" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '500px', width: '90%' }}>
+                    <div className="modal-header"><h3 style=${{ margin: 0, fontSize: '16px' }}>選擇影片</h3></div>
+                    <div style=${{ padding: '8px 0', maxHeight: '300px', overflowY: 'auto' }}>
+                        ${videoCandidates.map((c, i) => html`
+                            <div key=${i} onClick=${() => { playPath(c.absolutePath); setVideoCandidates(null); }}
+                                style=${{ padding: '10px 16px', cursor: 'pointer', borderBottom: '1px solid #f0f0f0', fontSize: '13px' }}
+                                onMouseEnter=${e => e.currentTarget.style.backgroundColor = '#f5f5f5'}
+                                onMouseLeave=${e => e.currentTarget.style.backgroundColor = ''}>
+                                ${c.fileName}
+                            </div>
+                        `)}
+                    </div>
+                    <div className="modal-footer"><button className="btn-secondary" onClick=${() => setVideoCandidates(null)}>取消</button></div>
+                </div>
+            </div>
+        `}
         <div className="main-layout">
             <div className="sidebar" style=${{ width: '50%' }}>
                 <div className="editor-gallery ${dragOver ? 'drag-over' : ''}" onDragOver=${e => { e.preventDefault(); setDragOver(true); }} onDragLeave=${() => setDragOver(false)} onDrop=${handleDropUpload}>
@@ -1071,7 +1133,8 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 <div className="content-header" style=${{ position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 2 }}>
                     <div className="result-info">${isEditMode ? '編輯作品' : '新增作品'}</div>
                     <div style=${{ display: 'flex', gap: '8px' }}>
-                        <button className="btn-primary" onClick=${handleSave}><${Save} size=${16} style=${{ marginRight: 4 }} /> 儲存</button>
+                        <button className="btn-primary" onClick=${handlePlay} disabled=${isPlaying} style=${{ backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }}><${Play} size=${16} style=${{ marginRight: 6 }} />${isPlaying ? '搜尋中...' : '播放影片'}</button>
+                        <button className="btn-primary" onClick=${handleSave}><${Save} size=${16} style=${{ marginRight: 6 }} /> 儲存</button>
                         <button className="nav-btn" onClick=${attemptCancel}><${X} size=${16} style=${{ marginRight: 4 }} /> 取消</button>
                     </div>
                 </div>
