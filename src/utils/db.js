@@ -45,63 +45,36 @@ try {
 function initDB() {
     if (!db) return;
     try {
-        // V1.2.x 更新: 檢查並新增 actors 表的 is_favorite 欄位
+        // actors 表欄位遷移: 以單次 PRAGMA 讀取現有欄位, 缺少者才 ALTER 補上
+        // (actors 表可能尚未建立, 讀取失敗時視為無欄位, 後續 CREATE TABLE 會補齊完整結構)
+        let actorCols = [];
         try {
-            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
-            const hasFavorite = tableInfo.some(col => col.name === 'is_favorite');
-            if (!hasFavorite) {
-                db.prepare("ALTER TABLE actors ADD COLUMN is_favorite INTEGER DEFAULT 0").run();
-                console.log("Migration Success: Added is_favorite column");
-            }
-        } catch (e) { 
-            console.error("Migration Error (is_favorite):", e); 
-        }
-
-        // V1.3.0 更新: 檢查並新增 actors 表的 aliases 欄位
-        try {
-            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
-            const hasAliases = tableInfo.some(col => col.name === 'aliases');
-            if (!hasAliases) {
-                db.prepare("ALTER TABLE actors ADD COLUMN aliases TEXT").run();
-                console.log("Migration Success: Added aliases column");
-            }
-        } catch (e) { 
-            console.error("Migration Error (aliases):", e);
-            // 讓使用者知道資料庫升級失敗，方便除錯
-            alert("資料庫升級失敗 (aliases): " + e.message + "\n請嘗試重啟軟體。");
-        }
-
-        // V1.6.0 更新: 新增演員個人檔案欄位 (生年月日 / 三圍尺寸 / AV出演期間)
-        try {
-            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
-            const newCols = [
-                { name: 'birthdate', sql: "ALTER TABLE actors ADD COLUMN birthdate TEXT" },
-                { name: 'sizes', sql: "ALTER TABLE actors ADD COLUMN sizes TEXT" },
-                { name: 'av_period', sql: "ALTER TABLE actors ADD COLUMN av_period TEXT" },
-                { name: 'name_reading', sql: "ALTER TABLE actors ADD COLUMN name_reading TEXT" },
-                { name: 'tags', sql: "ALTER TABLE actors ADD COLUMN tags TEXT" }
-            ];
-            newCols.forEach(col => {
-                if (!tableInfo.some(c => c.name === col.name)) {
-                    db.prepare(col.sql).run();
-                    console.log(`Migration Success: Added ${col.name} column`);
-                }
-            });
+            actorCols = db.prepare("PRAGMA table_info(actors)").all().map(c => c.name);
         } catch (e) {
-            console.error("Migration Error (actor profile fields):", e);
+            console.error("Migration Error (read actors schema):", e);
         }
-
-        // V1.7.0 更新: 新增 actors 表的 scrape_failed 欄位 (資料抓取失敗標記)
-        try {
-            const tableInfo = db.prepare("PRAGMA table_info(actors)").all();
-            const hasScrapeFailed = tableInfo.some(col => col.name === 'scrape_failed');
-            if (!hasScrapeFailed) {
-                db.prepare("ALTER TABLE actors ADD COLUMN scrape_failed INTEGER DEFAULT 0").run();
-                console.log("Migration Success: Added scrape_failed column");
+        const addActorColumnIfMissing = (name, sql, alertLabel) => {
+            if (actorCols.includes(name)) return;
+            try {
+                db.prepare(sql).run();
+                actorCols.push(name);
+                console.log(`Migration Success: Added ${name} column`);
+            } catch (e) {
+                console.error(`Migration Error (${name}):`, e);
+                // aliases 為關鍵欄位, 升級失敗時提示使用者以利除錯
+                if (alertLabel) alert(`資料庫升級失敗 (${alertLabel}): ${e.message}\n請嘗試重啟軟體。`);
             }
-        } catch (e) {
-            console.error("Migration Error (scrape_failed):", e);
-        }
+        };
+
+        // V1.2.x: is_favorite / V1.3.0: aliases / V1.6.0: 個人檔案欄位 / V1.7.0: scrape_failed
+        addActorColumnIfMissing('is_favorite', "ALTER TABLE actors ADD COLUMN is_favorite INTEGER DEFAULT 0");
+        addActorColumnIfMissing('aliases', "ALTER TABLE actors ADD COLUMN aliases TEXT", 'aliases');
+        addActorColumnIfMissing('birthdate', "ALTER TABLE actors ADD COLUMN birthdate TEXT");
+        addActorColumnIfMissing('sizes', "ALTER TABLE actors ADD COLUMN sizes TEXT");
+        addActorColumnIfMissing('av_period', "ALTER TABLE actors ADD COLUMN av_period TEXT");
+        addActorColumnIfMissing('name_reading', "ALTER TABLE actors ADD COLUMN name_reading TEXT");
+        addActorColumnIfMissing('tags', "ALTER TABLE actors ADD COLUMN tags TEXT");
+        addActorColumnIfMissing('scrape_failed', "ALTER TABLE actors ADD COLUMN scrape_failed INTEGER DEFAULT 0");
 
         // 建立資料表
         db.exec(`

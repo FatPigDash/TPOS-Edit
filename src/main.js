@@ -5,7 +5,6 @@
 */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const Database = require('better-sqlite3');
 const remoteMain = require('@electron/remote/main');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -37,34 +36,6 @@ remoteMain.initialize();
 const log = (msg) => console.log(`[Main]: ${msg}`);
 
 let mainWindow;
-let db;
-
-function initDatabase() {
-  try {
-    let basePath;
-    if (app.isPackaged) {
-      basePath = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
-    } else {
-      basePath = path.join(__dirname, '..');
-    }
-    const dbPath = path.join(basePath, 'data', 'my_collection.sqlite');
-    log(`Connecting to database at: ${dbPath}`);
-    
-    // 確保 data 資料夾存在
-    const dataDir = path.dirname(dbPath);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    // 這裡僅做連線測試與基本建立, 詳細 Schema 由 renderer 處理
-    const tempDb = new Database(dbPath);
-    log("Database check passed.");
-    tempDb.close();
-  } catch (error) {
-    log(`Database Error: ${error.message}`);
-    console.error(`無法連接資料庫: ${error.message}`);
-  }
-}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -77,8 +48,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false,
       enableRemoteModule: true,
-      webSecurity: false,
-      preload: path.join(__dirname, 'preload.js')
+      webSecurity: false
     }
   });
 
@@ -255,6 +225,32 @@ function scoreByName(fileName, workName) {
   return Math.round((lcs / Math.max(n.length, 1)) * 40);
 }
 
+// 分段字尾偵測正規表示式: 結尾 空白/-/_/( + (cd|part|disc)? + 數字或單字母 + )?
+const PART_SUFFIX_RE = /[\s\-_(]+(?:cd|part|disc|disk)?\s*(\d{1,3}|[a-z])\)?$/i;
+
+// 偵測檔名版本類型 (無修正流出 / 中文字幕 / 一般), 供區分同識別碼但不同版本的影片
+function detectVideoType(fileName) {
+  const b = fileName.toLowerCase();
+  if (b.includes('-uncensored-leak')) return 'uncensored-leak';
+  if (b.includes('-chinese-subtitle')) return 'chinese-subtitle';
+  return 'normal';
+}
+
+// 取得分段順序 (A→1、B→2、cd1→1...), 無分段字尾回傳 0
+function getPartOrder(fileName) {
+  const m = getTitlePart(fileName).match(PART_SUFFIX_RE);
+  if (!m) return 0;
+  const tok = m[1];
+  if (/^\d+$/.test(tok)) return parseInt(tok, 10);
+  return tok.toLowerCase().charCodeAt(0) - 96; // a→1, b→2 ...
+}
+
+// 版本鍵: 去除分段字尾後的標題 + 版本類型, 用來把同一部作品的分段檔歸為一組
+function getReleaseKey(fileName) {
+  const title = getTitlePart(fileName).replace(PART_SUFFIX_RE, '').trim();
+  return detectVideoType(fileName) + '|' + title;
+}
+
 // 讀取設定的 PotPlayer 路徑 (環境變數 > 根目錄 app.config.json > 常見安裝路徑)
 function getPotPlayerPath() {
   if (process.env.TPOS_POTPLAYER && fs.existsSync(process.env.TPOS_POTPLAYER)) {
@@ -283,9 +279,10 @@ function getPotPlayerPath() {
 }
 
 // IPC: 依識別碼 (work_number) 與作品名稱尋找根目錄內符合的影片
+// 回傳 groups: 同一部作品 (同版本) 的分段檔會被歸為一組, 依分段順序排序, 供依序播放
 ipcMain.handle('find-work-videos', async (event, { workNumber, name }) => {
   const root = getAppRoot();
-  if (!workNumber) return { root, candidates: [], unique: false };
+  if (!workNumber) return { root, candidates: [], groups: [], unique: false };
 
   const all = walkVideoFiles(root);
   const matched = all
@@ -294,28 +291,49 @@ ipcMain.handle('find-work-videos', async (event, { workNumber, name }) => {
       fileName: path.basename(full),
       relativePath: path.relative(root, full),
       absolutePath: full,
-      score: scoreByName(path.basename(full), name)
+      score: scoreByName(path.basename(full), name),
+      partOrder: getPartOrder(path.basename(full)),
+      releaseKey: getReleaseKey(path.basename(full))
     }));
 
-  matched.sort((a, b) => b.score - a.score || a.relativePath.localeCompare(b.relativePath));
+  // 依版本鍵分組: 同一部作品的分段檔歸為一組
+  const groupMap = new Map();
+  for (const f of matched) {
+    if (!groupMap.has(f.releaseKey)) groupMap.set(f.releaseKey, []);
+    groupMap.get(f.releaseKey).push(f);
+  }
 
-  // 是否能唯一判定: 最高分需大於 0 且嚴格高於第二名
-  const unique = matched.length > 0 && matched[0].score > 0 &&
-    (matched.length === 1 || matched[0].score > matched[1].score);
+  const groups = Array.from(groupMap.values()).map(files => {
+    files.sort((a, b) => a.partOrder - b.partOrder || a.fileName.localeCompare(b.fileName));
+    return {
+      files,
+      paths: files.map(f => f.absolutePath),
+      score: Math.max(...files.map(f => f.score)),
+      isMultiPart: files.length > 1
+    };
+  });
+  groups.sort((a, b) => b.score - a.score || a.files[0].relativePath.localeCompare(b.files[0].relativePath));
 
-  return { root, candidates: matched, unique };
+  // 攤平的候選 (相容用途)
+  const candidates = matched.slice().sort((a, b) => b.score - a.score || a.relativePath.localeCompare(b.relativePath));
+
+  // 只有一個版本分組時視為唯一 (即使是多段, 也可直接依序播放)
+  const unique = groups.length === 1;
+
+  return { root, candidates, groups, unique };
 });
 
-// IPC: 以 PotPlayer 播放指定影片
+// IPC: 以 PotPlayer 播放指定影片 (可傳單一路徑或路徑陣列; 多段時作為播放清單依序播放)
 ipcMain.handle('play-video', async (event, filePath) => {
   try {
-    if (!filePath || !fs.existsSync(filePath)) {
+    const paths = (Array.isArray(filePath) ? filePath : [filePath]).filter(p => p && fs.existsSync(p));
+    if (paths.length === 0) {
       return { ok: false, message: '影片檔不存在或已被移動' };
     }
     const exe = getPotPlayerPath();
     if (!exe) return { ok: false, reason: 'notfound' };
 
-    const child = spawn(exe, [filePath], { detached: true, stdio: 'ignore' });
+    const child = spawn(exe, paths, { detached: true, stdio: 'ignore' });
     child.on('error', (err) => console.error('PotPlayer 啟動失敗:', err.message));
     child.unref();
     return { ok: true, player: exe };
@@ -325,7 +343,6 @@ ipcMain.handle('play-video', async (event, filePath) => {
 });
 
 app.whenReady().then(() => {
-  initDatabase();
   createWindow();
 
   app.on('activate', function () {

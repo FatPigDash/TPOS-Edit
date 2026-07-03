@@ -250,11 +250,23 @@ function App() {
                 const firstGroupOrderResult = db.prepare('SELECT MIN(sort_order) as min_order FROM tag_groups').get();
                 const globalFirstGroupOrder = firstGroupOrderResult ? firstGroupOrderResult.min_order : null;
 
-                rows.forEach(row => {
+                // 一次撈出本頁所有作品的標籤 (避免每列各發一次查詢的 N+1 問題)
+                // 依 (群組排序, 標籤排序) 排序, 分組後各作品的標籤順序即與原本逐列查詢一致
+                const tagsByWork = {};
+                const workIds = rows.map(r => r.id);
+                if (workIds.length > 0) {
                     try {
-                        row.tags = db.prepare(`SELECT t.name, t.color, tg.sort_order as group_sort_order FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(row.id);
-                        row.firstGroupOrder = globalFirstGroupOrder;
-                    } catch (e) { row.tags = []; row.firstGroupOrder = null; }
+                        const placeholders = workIds.map(() => '?').join(',');
+                        const tagRows = db.prepare(`SELECT wtl.work_id as work_id, t.name, t.color, tg.sort_order as group_sort_order FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id IN (${placeholders}) ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(...workIds);
+                        tagRows.forEach(tr => {
+                            (tagsByWork[tr.work_id] || (tagsByWork[tr.work_id] = [])).push({ name: tr.name, color: tr.color, group_sort_order: tr.group_sort_order });
+                        });
+                    } catch (e) { console.error(e); }
+                }
+
+                rows.forEach(row => {
+                    row.tags = tagsByWork[row.id] || [];
+                    row.firstGroupOrder = globalFirstGroupOrder;
                 });
 
                 setWorks(rows);

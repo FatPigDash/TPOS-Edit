@@ -51,8 +51,34 @@ const STATUS_META = {
     duplicate: { label: '已放棄(重複建立)', color: '#ff9800', icon: AlertTriangle, spin: false }
 };
 
-// 解析檔名 (不含副檔名), 取得作品名稱/識別碼/類型
-// 支援格式:
+// 解析「分段字尾」(識別碼 [] 之後接的部分), 例如 A / B / -A / -1 / _2 / (2) / cd1 / part2
+// 回傳 { valid, isPart, order }: valid=false 代表 [] 後面接了無法辨識的內容 (非本系統檔名)
+function parsePartLabel(raw) {
+    const s = (raw || '').trim();
+    if (!s) return { valid: true, isPart: false, order: 0 };
+
+    // 去掉開頭分隔符/括號、cd|part|disc 前綴, 以及結尾的 )
+    const core = s
+        .replace(/^[\s\-_.(]+/, '')
+        .replace(/^(cd|part|disc|disk)\s*/i, '')
+        .replace(/[\s).]+$/, '')
+        .trim();
+
+    if (/^\d{1,3}$/.test(core)) {
+        return { valid: true, isPart: true, order: parseInt(core, 10) };
+    }
+    if (/^[A-Za-z]{1,2}$/.test(core)) {
+        // A=1, B=2 ... (依大寫字母序)
+        let order = 0;
+        const up = core.toUpperCase();
+        for (let i = 0; i < up.length; i++) order = order * 26 + (up.charCodeAt(i) - 64);
+        return { valid: true, isPart: true, order };
+    }
+    return { valid: false, isPart: false, order: 0 };
+}
+
+// 解析檔名 (不含副檔名), 取得作品名稱/識別碼/類型/分段順序
+// 支援格式 (識別碼 [] 後可再接分段字尾, 例如 [ABC-123] A / [ABC-123]-1 / [ABC-123] (2)):
 //   1. 作品名稱 [識別碼]
 //   2. 作品名稱 [識別碼]-uncensored-leak
 //   3. 作品名稱 [識別碼]-chinese-subtitle
@@ -72,14 +98,18 @@ function parseGroupFileName(nameNoExt) {
     }
 
     main = main.trim();
-    const m = main.match(/^(.*?)\s*\[([^\[\]]+)\]\s*$/);
+    // 以最後一組 [] 作為識別碼 (貪婪比對), 其後允許接分段字尾
+    const m = main.match(/^(.*)\[([^\[\]]+)\]\s*(.*)$/);
     if (!m) return null;
 
     const title = m[1].trim();
     const code = m[2].trim();
     if (!code) return null;
 
-    return { title, code, type };
+    const part = parsePartLabel(m[3]);
+    if (!part.valid) return null; // [] 後面有無法辨識的字尾 → 視為非本系統檔名
+
+    return { title, code, type, partOrder: part.order };
 }
 
 // 取得不重複的檔名 (若已存在則加上編號)
@@ -170,14 +200,20 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
                     order.push(groupKey);
                 }
                 const grp = groupsMap.get(groupKey);
-                if (isVideo) grp.videos.push(fileName);
-                else grp.images.push(fileName);
+                // 保留分段順序 (partOrder), 供匯入與封面排序使用
+                if (isVideo) grp.videos.push({ name: fileName, order: parsed.partOrder });
+                else grp.images.push({ name: fileName, order: parsed.partOrder });
             });
+
+            // 依分段順序排序 (A→B、1→2), 順序相同時以檔名排序
+            const sortByPart = (a, b) => a.order - b.order || a.name.localeCompare(b.name, 'en');
 
             const newItems = order.map((groupKey, idx) => {
                 const g = groupsMap.get(groupKey);
-                const hasVideo = g.videos.length > 0;
-                const hasImage = g.images.length > 0;
+                const videos = g.videos.slice().sort(sortByPart).map(v => v.name);
+                const images = g.images.slice().sort(sortByPart).map(v => v.name);
+                const hasVideo = videos.length > 0;
+                const hasImage = images.length > 0;
                 const isComplete = hasVideo && hasImage;
                 let message = '';
                 if (!hasVideo && !hasImage) message = '此組沒有影片與圖片檔案, 無法匯入';
@@ -189,8 +225,8 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
                     title: g.title,
                     code: g.code,
                     type: g.type,
-                    videos: g.videos,
-                    images: g.images,
+                    videos: videos,
+                    images: images,
                     status: isComplete ? 'pending' : 'unsupported',
                     message,
                     workNumber: ''
@@ -239,19 +275,26 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
         const workNumber = item.code;
         const name = (data.name && data.name.trim()) || item.title || workNumber;
 
-        // 取得影片資訊 (使用該組第一個影片檔)
+        // 取得影片資訊: 解析度取第一段, 長度加總所有分段 (分鐘)
         let resolution = '';
         let fileSize = '';
-        const videoFile = item.videos[0];
-        if (videoFile) {
+        let totalDuration = 0;
+        let hasDuration = false;
+        for (const videoFile of item.videos) {
             try {
                 const metadata = await ipcRenderer.invoke('get-video-metadata', path.join(dir, videoFile));
-                resolution = metadata && metadata.resolution ? metadata.resolution : '';
-                fileSize = metadata && metadata.duration != null ? String(metadata.duration) : '';
+                if (metadata) {
+                    if (!resolution && metadata.resolution) resolution = metadata.resolution;
+                    if (metadata.duration != null) {
+                        totalDuration += Number(metadata.duration) || 0;
+                        hasDuration = true;
+                    }
+                }
             } catch (e) {
-                // 影片資訊讀取失敗不阻擋匯入流程
+                // 個別影片資訊讀取失敗不阻擋匯入流程
             }
         }
+        if (hasDuration) fileSize = String(totalDuration);
 
         let workId;
         db.transaction(() => {

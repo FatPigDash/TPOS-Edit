@@ -184,6 +184,21 @@ function parseCodeSearchQuery(input, dbField) {
     return { sql: ` AND (${sqlParts.join(' OR ')})`, params: params };
 }
 
+// 計算高對比文字顏色 (YIQ公式): 依背景色回傳黑或白文字色
+function getContrastYIQ(hexcolor) {
+    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
+    let hex = hexcolor.replace('#', '');
+    if (hex.length === 3) {
+        hex = hex.split('').map(char => char + char).join('');
+    }
+    if (hex.length !== 6) return '#333333';
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return (yiq >= 128) ? '#000000' : '#ffffff';
+}
+
 function hexToRgb(hex) {
     if (!hex) return '無顏色';
     hex = hex.replace('#', '');
@@ -219,6 +234,7 @@ module.exports = {
     parseNameWithAliases, // Export New Function
     parseSearchQuery,
     parseCodeSearchQuery,
+    getContrastYIQ,
     hexToRgb,
     getDragAfterElement,
     stopPropagation

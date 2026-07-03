@@ -524,6 +524,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     const [totalWorks, setTotalWorks] = React.useState(0);
     const [viewingImage, setViewingImage] = React.useState(null);
     const [imageError, setImageError] = React.useState(false);
+    const [imgTs, setImgTs] = React.useState(0); // 圖片快取破壞用時間戳 (換圖後即時刷新)
     const [scraping, setScraping] = React.useState(false);
     const [editing, setEditing] = React.useState(false);
     const [candidates, setCandidates] = React.useState(null); // null | [{id,name,url,thumb,info}]
@@ -531,7 +532,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     const reloadActor = () => {
         try {
             const a = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId);
-            if (a) { setActor(a); setImageError(false); }
+            if (a) { setActor(a); setImageError(false); setImgTs(Date.now()); }
         } catch (e) { console.error(e); }
     };
 
@@ -652,7 +653,10 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     if (!actor) return null;
 
     let imgSrc = null;
-    if (actor.image_path) imgSrc = getFileUrl(path.join(actorsImgDir, actor.image_path));
+    if (actor.image_path) {
+        imgSrc = getFileUrl(path.join(actorsImgDir, actor.image_path));
+        if (imgTs) imgSrc += `?t=${imgTs}`;
+    }
     const hasImg = imgSrc && !imageError;
 
     const aliasList = actor.aliases ? actor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
@@ -975,6 +979,14 @@ function ActorSystem({
         setCurrentPage(1);
     }, [appliedFilters, sortOrder, viewMode]);
     React.useEffect(() => { loadActors(); }, [currentPage, appliedFilters, sortOrder, viewMode]);
+
+    // 從詳細頁返回列表時重新載入 (detailActorId 由有值變為 null),
+    // 以反映在詳細頁對演員所做的變更 (更換圖片/名稱/關注狀態等), 並更新縮圖的 cacheBust
+    const prevDetailIdRef = React.useRef(detailActorId);
+    React.useEffect(() => {
+        if (prevDetailIdRef.current && !detailActorId) loadActors();
+        prevDetailIdRef.current = detailActorId;
+    }, [detailActorId]);
 
     const handleApply = () => {
         pushHistory && pushHistory();

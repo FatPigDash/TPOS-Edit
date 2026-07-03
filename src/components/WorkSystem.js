@@ -12,7 +12,7 @@ const {
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
 const {
-    getFileUrl, parseSearchQuery, stopPropagation, getNewActorNumber, getOrCreateActorId
+    getFileUrl, parseSearchQuery, stopPropagation, getNewActorNumber, getOrCreateActorId, getContrastYIQ
 } = require('../utils/helpers');
 const {
     ConfirmModal, ImageViewerModal, SearchHelpText, CodeSearchHelpText
@@ -383,21 +383,6 @@ function ActorSelector({ selectedActors, onChange, inputValue, onInputChange }) 
         </div>`;
 }
 
-// 計算高對比文字顏色 (YIQ公式)
-const getContrastYIQ = (hexcolor) => {
-    if (!hexcolor || typeof hexcolor !== 'string') return '#333333';
-    let hex = hexcolor.replace('#', '');
-    if (hex.length === 3) {
-        hex = hex.split('').map(char => char + char).join('');
-    }
-    if (hex.length !== 6) return '#333333';
-    const r = parseInt(hex.substr(0, 2), 16);
-    const g = parseInt(hex.substr(2, 2), 16);
-    const b = parseInt(hex.substr(4, 2), 16);
-    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-    return (yiq >= 128) ? '#000000' : '#ffffff';
-};
-
 function TagSelector({ selectedTags, onChange }) {
     const [groups, setGroups] = React.useState([]);
 
@@ -458,21 +443,16 @@ function parseTimeToSeconds(timeStr) {
     return null;
 }
 
-function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear, canGoBack, onGoBack, onNavigateToActor }) {
-    const [work, setWork] = React.useState(null);
-    const [images, setImages] = React.useState([]);
-    const [previewIndex, setPreviewIndex] = React.useState(0);
-    const [viewingImage, setViewingImage] = React.useState(null);
-    const [linkedActors, setLinkedActors] = React.useState([]);
-    const [linkedTags, setLinkedTags] = React.useState([]);
-    const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
-    const [videoCandidates, setVideoCandidates] = React.useState(null); // 多筆影片選擇清單
+// 影片播放共用邏輯: 依識別碼於根目錄比對影片並以 PotPlayer 播放
+// 多筆且無法唯一判定時, 將候選清單放入 videoCandidates 供 UI 顯示選擇
+function useVideoPlayer() {
     const [isPlaying, setIsPlaying] = React.useState(false);
+    const [videoCandidates, setVideoCandidates] = React.useState(null);
 
-    // 以 PotPlayer 播放指定路徑
-    const playPath = async (absPath) => {
+    // 以 PotPlayer 播放指定路徑 (可傳單一路徑或路徑陣列; 多段時依序播放)
+    const playPath = async (absPathOrList) => {
         try {
-            const r = await ipcRenderer.invoke('play-video', absPath);
+            const r = await ipcRenderer.invoke('play-video', absPathOrList);
             if (!r || !r.ok) {
                 if (r && r.reason === 'notfound') {
                     alert('找不到 PotPlayer。\n請確認已安裝 PotPlayer，或於軟體根目錄的 app.config.json 設定 "potplayerPath" 指向 PotPlayer 執行檔。');
@@ -487,32 +467,46 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
         }
     };
 
-    // 點擊播放按鈕: 依識別碼比對根目錄影片
-    const handlePlay = async () => {
-        if (!work || !work.work_number) {
+    // 依識別碼比對根目錄影片: 單一版本 (含多段) 直接依序播放, 多版本則交由 UI 選擇
+    const findAndPlay = async (workNumber, name) => {
+        if (!workNumber) {
             alert('此作品沒有識別碼，無法比對影片。');
             return;
         }
         setIsPlaying(true);
         try {
-            const res = await ipcRenderer.invoke('find-work-videos', { workNumber: work.work_number, name: work.name });
-            const list = (res && res.candidates) || [];
-            if (list.length === 0) {
-                alert(`在軟體根目錄內找不到識別碼為「${work.work_number}」的影片檔。`);
+            const res = await ipcRenderer.invoke('find-work-videos', { workNumber, name });
+            const groups = (res && res.groups) || [];
+            if (groups.length === 0) {
+                alert(`在軟體根目錄內找不到識別碼為「${workNumber}」的影片檔。`);
                 return;
             }
-            if (list.length === 1 || res.unique) {
-                await playPath(list[0].absolutePath);
+            if (groups.length === 1) {
+                // 只有一個版本 (可能為多段) → 把所有分段丟給 PotPlayer 依序播放
+                await playPath(groups[0].paths);
                 return;
             }
-            // 多筆且無法唯一判定 -> 彈出清單供選擇
-            setVideoCandidates(list);
+            // 多個版本 → 交由 UI 選擇, 每個項目播放該版本的全部分段
+            setVideoCandidates(groups);
         } catch (e) {
             alert('搜尋影片失敗: ' + e.message);
         } finally {
             setIsPlaying(false);
         }
     };
+
+    return { isPlaying, videoCandidates, setVideoCandidates, playPath, findAndPlay };
+}
+
+function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear, canGoBack, onGoBack, onNavigateToActor }) {
+    const [work, setWork] = React.useState(null);
+    const [images, setImages] = React.useState([]);
+    const [previewIndex, setPreviewIndex] = React.useState(0);
+    const [viewingImage, setViewingImage] = React.useState(null);
+    const [linkedActors, setLinkedActors] = React.useState([]);
+    const [linkedTags, setLinkedTags] = React.useState([]);
+    const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
+    const { isPlaying, videoCandidates, setVideoCandidates, playPath, findAndPlay } = useVideoPlayer();
 
     React.useEffect(() => {
         ensureNotesColumn(); // 確保資料庫有 notes 欄位
@@ -631,7 +625,7 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                         </button>
                     `}
                     <div className="result-info" style=${{ flex: 1 }}>作品詳情</div>
-                    <button className="btn-primary" onClick=${handlePlay} disabled=${isPlaying} style=${{ marginRight: 8, backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }} title="以 PotPlayer 播放此作品影片">
+                    <button className="btn-primary" onClick=${() => findAndPlay(work.work_number, work.name)} disabled=${isPlaying} style=${{ marginRight: 8, backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }} title="以 PotPlayer 播放此作品影片">
                         <${Play} size=${16} style=${{ marginRight: 6 }} /> ${isPlaying ? '搜尋中...' : '播放影片'}
                     </button>
                     <button className="btn-primary" onClick=${() => onEdit(workId)}><${Edit} size=${16} style=${{ marginRight: 6 }} /> 編輯作品</button>
@@ -715,18 +709,18 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                 <div style=${{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }} onClick=${() => setVideoCandidates(null)}>
                     <div style=${{ backgroundColor: 'white', borderRadius: '8px', padding: '20px', width: '600px', maxWidth: '90vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick=${e => e.stopPropagation()}>
                         <div style=${{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
-                            <h3 style=${{ margin: 0, flex: 1 }}>找到多個符合「${work.work_number}」的影片，請選擇要播放的檔案</h3>
+                            <h3 style=${{ margin: 0, flex: 1 }}>找到多個符合「${work.work_number}」的版本，請選擇要播放的版本</h3>
                             <button className="btn-ghost" onClick=${() => setVideoCandidates(null)}><${X} size=${20} /></button>
                         </div>
                         <div style=${{ overflowY: 'auto', flex: 1 }}>
-                            ${videoCandidates.map((c, idx) => html`
-                                <div key=${idx} onClick=${() => playPath(c.absolutePath)}
+                            ${videoCandidates.map((g, idx) => html`
+                                <div key=${idx} onClick=${() => playPath(g.paths)}
                                     style=${{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 8px', borderBottom: '1px solid #eee', cursor: 'pointer' }}
-                                    title=${c.absolutePath}>
+                                    title=${g.files.map(f => f.absolutePath).join('\n')}>
                                     <${Play} size=${16} color="#28a745" style=${{ flexShrink: 0 }} />
                                     <div style=${{ minWidth: 0 }}>
-                                        <div style=${{ fontWeight: 'bold', wordBreak: 'break-all' }}>${c.fileName}</div>
-                                        <div style=${{ fontSize: '12px', color: '#888', wordBreak: 'break-all' }}>${c.relativePath}</div>
+                                        <div style=${{ fontWeight: 'bold', wordBreak: 'break-all' }}>${g.files[0].fileName}${g.isMultiPart ? html` <span style=${{ color: '#2196F3', fontWeight: 'normal', fontSize: '13px' }}>(共 ${g.files.length} 段, 依序播放)</span>` : ''}</div>
+                                        <div style=${{ fontSize: '12px', color: '#888', wordBreak: 'break-all' }}>${g.files[0].relativePath}</div>
                                     </div>
                                 </div>
                             `)}
@@ -753,50 +747,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [initialState, setInitialState] = React.useState(null);
     const [showDirtyWarning, setShowDirtyWarning] = React.useState(false);
     const [isScraperOpen, setIsScraperOpen] = React.useState(false);
-    const [isPlaying, setIsPlaying] = React.useState(false);
-    const [videoCandidates, setVideoCandidates] = React.useState(null);
-
-    const playPath = async (absPath) => {
-        try {
-            const r = await ipcRenderer.invoke('play-video', absPath);
-            if (!r || !r.ok) {
-                if (r && r.reason === 'notfound') {
-                    alert('找不到 PotPlayer。\n請確認已安裝 PotPlayer，或於軟體根目錄的 app.config.json 設定 "potplayerPath" 指向 PotPlayer 執行檔。');
-                } else {
-                    alert('播放失敗: ' + ((r && r.message) || '未知錯誤'));
-                }
-                return;
-            }
-            setVideoCandidates(null);
-        } catch (e) {
-            alert('播放失敗: ' + e.message);
-        }
-    };
-
-    const handlePlay = async () => {
-        if (!formData.work_number) {
-            alert('此作品沒有識別碼，無法比對影片。');
-            return;
-        }
-        setIsPlaying(true);
-        try {
-            const res = await ipcRenderer.invoke('find-work-videos', { workNumber: formData.work_number, name: formData.name });
-            const list = (res && res.candidates) || [];
-            if (list.length === 0) {
-                alert(`在軟體根目錄內找不到識別碼為「${formData.work_number}」的影片檔。`);
-                return;
-            }
-            if (list.length === 1 || res.unique) {
-                await playPath(list[0].absolutePath);
-                return;
-            }
-            setVideoCandidates(list);
-        } catch (e) {
-            alert('搜尋影片失敗: ' + e.message);
-        } finally {
-            setIsPlaying(false);
-        }
-    };
+    const { isPlaying, videoCandidates, setVideoCandidates, playPath, findAndPlay } = useVideoPlayer();
 
     React.useEffect(() => {
         ensureNotesColumn(); // 確保資料庫有 notes 欄位
@@ -847,6 +798,10 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         const files = Array.from(fileList);
         const newImages = [];
         let hasUnsupported = false;
+        // 本批次影片的長度加總 (支援一次拖入多段影片), 解析度取批次中最後一段
+        let batchDuration = 0;
+        let batchResolution = '';
+        let batchHasVideo = false;
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
@@ -861,11 +816,11 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 setIsLoading(true);
                 try {
                     const metadata = await ipcRenderer.invoke('get-video-metadata', realPath);
-                    setFormData(prev => ({
-                        ...prev,
-                        resolution: metadata.resolution,
-                        file_size: metadata.duration
-                    }));
+                    batchHasVideo = true;
+                    if (metadata) {
+                        if (metadata.resolution) batchResolution = metadata.resolution;
+                        if (metadata.duration != null) batchDuration += Number(metadata.duration) || 0;
+                    }
                 } catch (err) {
                     console.error("Video metadata error:", err);
                     alert("無法讀取影片資訊: " + err.message);
@@ -882,6 +837,14 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
             } else {
                 hasUnsupported = true;
             }
+        }
+
+        if (batchHasVideo) {
+            setFormData(prev => ({
+                ...prev,
+                resolution: batchResolution || prev.resolution,
+                file_size: String(batchDuration)
+            }));
         }
 
         if (hasUnsupported) {
@@ -1075,14 +1038,15 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         ${videoCandidates && html`
             <div className="modal-overlay" onClick=${() => setVideoCandidates(null)}>
                 <div className="modal-box" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '500px', width: '90%' }}>
-                    <div className="modal-header"><h3 style=${{ margin: 0, fontSize: '16px' }}>選擇影片</h3></div>
+                    <div className="modal-header"><h3 style=${{ margin: 0, fontSize: '16px' }}>選擇版本</h3></div>
                     <div style=${{ padding: '8px 0', maxHeight: '300px', overflowY: 'auto' }}>
-                        ${videoCandidates.map((c, i) => html`
-                            <div key=${i} onClick=${() => { playPath(c.absolutePath); setVideoCandidates(null); }}
+                        ${videoCandidates.map((g, i) => html`
+                            <div key=${i} onClick=${() => { playPath(g.paths); setVideoCandidates(null); }}
                                 style=${{ padding: '10px 16px', cursor: 'pointer', borderBottom: '1px solid #f0f0f0', fontSize: '13px' }}
+                                title=${g.files.map(f => f.absolutePath).join('\n')}
                                 onMouseEnter=${e => e.currentTarget.style.backgroundColor = '#f5f5f5'}
                                 onMouseLeave=${e => e.currentTarget.style.backgroundColor = ''}>
-                                ${c.fileName}
+                                ${g.files[0].fileName}${g.isMultiPart ? html` <span style=${{ color: '#2196F3' }}>(共 ${g.files.length} 段)</span>` : ''}
                             </div>
                         `)}
                     </div>
@@ -1133,7 +1097,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 <div className="content-header" style=${{ position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 2 }}>
                     <div className="result-info">${isEditMode ? '編輯作品' : '新增作品'}</div>
                     <div style=${{ display: 'flex', gap: '8px' }}>
-                        <button className="btn-primary" onClick=${handlePlay} disabled=${isPlaying} style=${{ backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }}><${Play} size=${16} style=${{ marginRight: 6 }} />${isPlaying ? '搜尋中...' : '播放影片'}</button>
+                        <button className="btn-primary" onClick=${() => findAndPlay(formData.work_number, formData.name)} disabled=${isPlaying} style=${{ backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }}><${Play} size=${16} style=${{ marginRight: 6 }} />${isPlaying ? '搜尋中...' : '播放影片'}</button>
                         <button className="btn-primary" onClick=${handleSave}><${Save} size=${16} style=${{ marginRight: 6 }} /> 儲存</button>
                         <button className="nav-btn" onClick=${attemptCancel}><${X} size=${16} style=${{ marginRight: 4 }} /> 取消</button>
                     </div>
