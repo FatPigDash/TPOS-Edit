@@ -19,8 +19,8 @@ const { getOrCreateActorId } = require('../utils/helpers');
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.wmv', '.mov', '.ts', '.m2ts', '.flv', '.rmvb', '.webm', '.iso'];
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.jfif', '.bmp', '.gif'];
 
-// 自動選取的標籤名稱
-const TAG_NOT_WATCHED = '還沒看';
+// 匯入時自動選取的預設標籤名稱 (依序帶入)
+const DEFAULT_IMPORT_TAGS = ['還沒看', '剛匯入未分類'];
 
 // 匯入成功後的目標資料夾名稱
 const FOLDER_SUCCESS = '[匯入成功]';
@@ -268,7 +268,7 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
         } catch (e) { }
     };
 
-    // 依抓取結果建立作品, 新增影片/圖片資訊, 選取「還沒看」標籤後儲存,
+    // 依抓取結果建立作品, 新增影片/圖片資訊, 選取預設標籤 (還沒看 / 剛匯入未分類) 後儲存,
     // 最後將該組檔案移動到 [匯入成功] 資料夾
     const processGroup = async (item, data) => {
         const dir = folderPathRef.current;
@@ -338,11 +338,13 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
                 });
             }
 
-            // 自動選取標籤「還沒看」
-            const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(TAG_NOT_WATCHED);
-            if (tagRow) {
-                db.prepare('INSERT OR IGNORE INTO work_tag_link (work_id, tag_id) VALUES (?, ?)').run(workId, tagRow.id);
-            }
+            // 自動選取預設標籤 (還沒看 / 剛匯入未分類)
+            const findTagByName = db.prepare('SELECT id FROM tags WHERE name = ?');
+            const linkWorkTag = db.prepare('INSERT OR IGNORE INTO work_tag_link (work_id, tag_id) VALUES (?, ?)');
+            DEFAULT_IMPORT_TAGS.forEach(tagName => {
+                const tagRow = findTagByName.get(tagName);
+                if (tagRow) linkWorkTag.run(workId, tagRow.id);
+            });
         })();
 
         // 將該組影片與圖片檔案移動到 [匯入成功] 資料夾
@@ -588,7 +590,7 @@ function VideoImportSystem({ canGoBack, onGoBack }) {
                     </div>
                     <div style=${{ fontSize: '12px', color: '#888', lineHeight: '1.5' }}>
                         說明: 開始處理後會開啟右側瀏覽器視窗並前往 javlibrary 搜尋。系統會自動偵測搜尋結果並繼續:<br/>
-                        ・找到單一作品 -> 自動新增作品、填入資訊、加入影片與圖片、選取「${TAG_NOT_WATCHED}」標籤並儲存, 然後將該組檔案移至「${FOLDER_SUCCESS}」資料夾<br/>
+                        ・找到單一作品 -> 自動新增作品、填入資訊、加入影片與圖片、選取${DEFAULT_IMPORT_TAGS.map(t => `「${t}」`).join('')}標籤並儲存, 然後將該組檔案移至「${FOLDER_SUCCESS}」資料夾<br/>
                         ・搜尋到多個結果或完全找不到結果 -> 放棄該組作品的新增, 檔案保留原位<br/>
                         ・識別碼已存在作品卡片 -> 放棄該組新增, 並將檔案移至「${FOLDER_DUPLICATE}」資料夾<br/>
                         ・只有影片或只有圖片 (非完整一組) -> 自動跳過, 不進行匯入<br/>
