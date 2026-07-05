@@ -75,6 +75,16 @@ function initDB() {
         addActorColumnIfMissing('name_reading', "ALTER TABLE actors ADD COLUMN name_reading TEXT");
         addActorColumnIfMissing('tags', "ALTER TABLE actors ADD COLUMN tags TEXT");
         addActorColumnIfMissing('scrape_failed', "ALTER TABLE actors ADD COLUMN scrape_failed INTEGER DEFAULT 0");
+        // 自訂別名 custom_aliases: 合併來源名 / 使用者手動輸入; 抓取流程不會覆蓋此欄位
+        const hadCustomAliases = actorCols.includes('custom_aliases');
+        addActorColumnIfMissing('custom_aliases', "ALTER TABLE actors ADD COLUMN custom_aliases TEXT");
+        // 首次升級: 將既有 aliases 複製一份到 custom_aliases,
+        // 避免既有(可能為手動輸入)別名在下次抓取覆蓋 aliases 時遺失
+        if (!hadCustomAliases && actorCols.includes('custom_aliases')) {
+            try {
+                db.prepare("UPDATE actors SET custom_aliases = aliases WHERE aliases IS NOT NULL AND TRIM(aliases) != ''").run();
+            } catch (e) { console.error('Migration Error (custom_aliases copy):', e); }
+        }
 
         // 建立資料表
         db.exec(`
@@ -128,7 +138,8 @@ function initDB() {
                 av_period TEXT,
                 name_reading TEXT,
                 tags TEXT,
-                scrape_failed INTEGER DEFAULT 0
+                scrape_failed INTEGER DEFAULT 0,
+                custom_aliases TEXT
             );
             CREATE TABLE IF NOT EXISTS work_actor_link (
                 work_id INTEGER,

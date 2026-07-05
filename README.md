@@ -123,3 +123,18 @@ dist/
 ```
 dist/TPOS V3.0.1 Portable.exe
 ```
+
+## 6. 演員資訊抓取來源
+
+演員資料庫的「線上抓取」功能會從下列網站取得演員個人檔案與圖片
+（實作於 `src/components/ActorScraper.js`）：
+
+- 目標網站：[minnano-av.com](https://www.minnano-av.com)
+- 搜尋網址：`https://www.minnano-av.com/search_result.php?search_scope=actress&search_word={演員名稱}`
+- 演員頁網址格式：`https://www.minnano-av.com/actress{id}.html`
+
+抓取的欄位包含：主名稱讀音（かな / romaji）、別名、生年月日、
+サイズ、AV 出演期間、標籤（タグ）與檔案圖片（`og:image`）。
+
+> 抓取與圖片下載時會帶入桌面瀏覽器 User-Agent 與 `Referer: https://www.minnano-av.com/`，
+> 以降低被判定為爬蟲而遭封鎖的機率。

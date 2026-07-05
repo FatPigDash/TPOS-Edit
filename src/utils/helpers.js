@@ -22,13 +22,14 @@ function getNewActorNumber(db) {
 }
 
 // 新增: 解析名稱與括號別名 (供 UI 與 批次功能共用)
+// 支援半形 () 與全形 （） 括號
 function parseNameWithAliases(rawName) {
     if (!rawName) return { name: '', aliases: [] };
 
     const extractedAliases = [];
 
-    // 1. 提取括號內的內容
-    const regex = /\(([^)]+)\)/g;
+    // 1. 提取括號內的內容 (半形與全形括號皆支援)
+    const regex = /[（(]([^（()）]+)[)）]/g;
     let match;
     while ((match = regex.exec(rawName)) !== null) {
         const alias = match[1].trim();
@@ -36,7 +37,7 @@ function parseNameWithAliases(rawName) {
     }
 
     // 2. 移除括號與內容，取得乾淨的主名稱
-    const cleanName = rawName.replace(/\s*\([^)]+\)/g, '').trim();
+    const cleanName = rawName.replace(/\s*[（(][^（()）]+[)）]/g, '').trim();
 
     return {
         name: cleanName || rawName.trim(), // 如果刪光了(罕見)，就回傳原字串
@@ -44,44 +45,114 @@ function parseNameWithAliases(rawName) {
     };
 }
 
+// 正規化字串以利比對:
+//  - NFKC: 全形英數/符號/半形片假名 → 標準形 (例: （）→(), ／→/, ﾓﾘ→モリ)
+//  - 片假名 → 平假名 (使假名寫法一致)
+//  - 轉小寫、移除空白與常見分隔/註記符號
+// 注意: 漢字與假名之間無法自動轉換 (例: 加奈子 vs かなこ), 此為先天限制。
+function normalizeForMatch(s) {
+    if (!s) return '';
+    let t = String(s).normalize('NFKC');
+    // 片假名 (ァ-ヶ) → 平假名; 長音記號 ー 保留不變
+    t = t.replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+    t = t.toLowerCase();
+    // 移除空白、括號與常見分隔符號, 只保留識別用字元
+    t = t.replace(/[\s()（）・･\/／,，、。.'’"”\-—_]/g, '');
+    return t;
+}
+
+// 尾端「讀音」括號 (內含 "/" 的那組, 形如「かな / romaji」)
+const READING_SUFFIX_RE = /\s*[（(]([^（()）]*[\/／][^（()）]*)[)）]\s*$/;
+
+// 由單一別名條目取出可比對的名稱片段
+// 例: "浅倉彩菜（舞ワイフ） （あさくらあやな / Asakura Ayana）"
+//   -> ["あさくらあやな", "Asakura Ayana", "浅倉彩菜（舞ワイフ）", "浅倉彩菜"]
+function aliasEntryTokens(entry) {
+    const tokens = [];
+    const trimmed = (entry || '').trim();
+    if (!trimmed) return tokens;
+
+    // 取出尾端讀音 (かな 與 romaji 分開加入)
+    const readingMatch = trimmed.match(READING_SUFFIX_RE);
+    if (readingMatch) {
+        readingMatch[1].split(/[\/／]/).forEach(p => { const v = p.trim(); if (v) tokens.push(v); });
+    }
+
+    // 去掉尾端讀音後的主體 (可能仍含 studio 註記, 如「（舞ワイフ）」)
+    const body = trimmed.replace(READING_SUFFIX_RE, '').trim();
+    if (body) {
+        tokens.push(body);
+        // 再去掉所有括號註記, 取得純藝名
+        const bare = body.replace(/\s*[（(][^（()）]*[)）]/g, '').trim();
+        if (bare && bare !== body) tokens.push(bare);
+    } else {
+        tokens.push(trimmed);
+    }
+    return tokens;
+}
+
+// 取得某演員「姓名」欄位可用於比對的正規化 token
+function actorNameTokens(actor) {
+    const set = new Set();
+    const parsed = parseNameWithAliases(actor.name || '');
+    for (const s of [actor.name, parsed.name, ...parsed.aliases]) {
+        const n = normalizeForMatch(s);
+        if (n) set.add(n);
+    }
+    // name_reading (例: "もりさわかな / Morisawa kana"): 讀音 (かな / romaji) 也納入比對,
+    // 讓純假名 / 羅馬拼音的輸入也能命中主藝名。
+    if (actor.name_reading) {
+        for (const part of actor.name_reading.split(/[\/／]/)) {
+            const n = normalizeForMatch(part);
+            if (n) set.add(n);
+        }
+    }
+    return set;
+}
+
+// 取得某演員「別名」欄位可用於比對的正規化 token
+// 同時涵蓋自動抓取的 aliases 與自訂的 custom_aliases。
+function actorAliasTokens(actor) {
+    const set = new Set();
+    for (const col of [actor.aliases, actor.custom_aliases]) {
+        if (!col) continue;
+        for (const entry of col.split(/[,，]/)) {
+            for (const t of aliasEntryTokens(entry)) {
+                const n = normalizeForMatch(t);
+                if (n) set.add(n);
+            }
+        }
+    }
+    return set;
+}
+
 // 智慧比對演員 (核心邏輯更新)
+// 以正規化 (全半形 / 片假名平假名 / 讀音註記) 後的字串比對, 提升「別名同一人」的辨識率。
+// 先以「姓名」欄位比對 (優先), 再以「別名」欄位比對。
 function findSmartMatchActor(db, rawName) {
     if (!db || !rawName) return null;
 
-    // 1. 產生候選關鍵字清單 (Candidate Keywords)
-    const candidates = new Set();
-
-    // 使用新的解析函式來取得拆解後的名稱
+    // 1. 產生候選關鍵字 (原始輸入 + 主名稱 + 括號別名), 全部正規化去重
     const parsed = parseNameWithAliases(rawName);
+    const candSet = new Set();
+    for (const c of [rawName, parsed.name, ...parsed.aliases]) {
+        const n = normalizeForMatch(c);
+        if (n) candSet.add(n);
+    }
+    if (candSet.size === 0) return null;
 
-    // A. 原始輸入
-    candidates.add(rawName.trim());
-    // B. 主名稱
-    if (parsed.name) candidates.add(parsed.name);
-    // C. 括號內的別名
-    parsed.aliases.forEach(a => candidates.add(a));
+    const actors = db.prepare('SELECT id, name, aliases, name_reading, custom_aliases FROM actors WHERE is_deleted = 0').all();
 
-    // 2. 針對每個候選字進行資料庫比對
-    const candidateArray = Array.from(candidates);
-
-    for (const keyword of candidateArray) {
-        if (!keyword) continue;
-
-        // 步驟 2-1: 比對「姓名 (name)」欄位 (完全一致)
-        const nameMatch = db.prepare('SELECT id FROM actors WHERE name = ? AND is_deleted = 0').get(keyword);
-        if (nameMatch) return nameMatch.id;
-
-        // 步驟 2-2: 比對「別名 (aliases)」欄位 (包含搜尋)
-        const aliasCandidates = db.prepare('SELECT id, aliases FROM actors WHERE aliases LIKE ? AND is_deleted = 0').all(`%${keyword}%`);
-
-        for (const row of aliasCandidates) {
-            if (row.aliases) {
-                // 將資料庫的 "A, B, C" 拆開來精確比對
-                const dbAliases = row.aliases.split(/[,，]/).map(s => s.trim());
-                if (dbAliases.includes(keyword)) {
-                    return row.id;
-                }
-            }
+    // 2-1. 先以「姓名」欄位比對 (優先)
+    for (const actor of actors) {
+        for (const tok of actorNameTokens(actor)) {
+            if (candSet.has(tok)) return actor.id;
+        }
+    }
+    // 2-2. 再以「別名」欄位比對
+    for (const actor of actors) {
+        for (const tok of actorAliasTokens(actor)) {
+            if (candSet.has(tok)) return actor.id;
         }
     }
 

@@ -142,7 +142,7 @@ function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFav
             </div>
             <div className="card-info">
                 <div className="card-title" title=${actor.name} onClick=${() => onOpenDetail(actor.id)} style=${{ cursor: 'pointer' }}>${actor.name}</div>
-                ${actor.aliases && html`<div style=${{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>(${actor.aliases})</div>`}
+                ${(actor.aliases || actor.custom_aliases) && html`<div style=${{ fontSize: '11px', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>(${[actor.aliases, actor.custom_aliases].filter(s => s && s.trim()).join(', ')})</div>`}
                 <div style=${{ fontSize: '12px', color: '#666', marginBottom: '4px', marginTop: '4px' }}>
                     <span>作品: ${actor.work_count || 0}部</span>
                 </div>
@@ -156,7 +156,8 @@ function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFav
 function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
     const isEdit = !!actorId;
     const [name, setName] = React.useState("");
-    const [aliasItems, setAliasItems] = React.useState([""]);
+    const [aliasItems, setAliasItems] = React.useState([""]); // 自訂別名清單 (custom_aliases)
+    const [autoAliases, setAutoAliases] = React.useState(""); // 自動別名 (aliases, 唯讀顯示)
     const [birthdate, setBirthdate] = React.useState("");
     const [sizes, setSizes] = React.useState("");
     const [avPeriod, setAvPeriod] = React.useState("");
@@ -185,7 +186,8 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
             const actor = db.prepare('SELECT * FROM actors WHERE id=?').get(actorId);
             if (actor) {
                 setName(actor.name);
-                setAliasItems(splitAliases(actor.aliases));
+                setAutoAliases(actor.aliases || "");
+                setAliasItems(splitAliases(actor.custom_aliases));
                 setBirthdate(actor.birthdate || "");
                 setSizes(actor.sizes || "");
                 setAvPeriod(actor.av_period || "");
@@ -199,15 +201,16 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setImage(imgState);
                 setOriginalImage(actor.image_path);
                 setIsFavorite(actor.is_favorite || 0);
-                setInitialState({ name: actor.name, aliases: cleanAliases(splitAliases(actor.aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", tags: actor.tags || "", image: imgState, isFavorite: actor.is_favorite || 0 });
+                setInitialState({ name: actor.name, customAliases: cleanAliases(splitAliases(actor.custom_aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", tags: actor.tags || "", image: imgState, isFavorite: actor.is_favorite || 0 });
             }
         } else {
             const num = getNewActorNumber(db);
             setActorNumber(num);
             setIsFavorite(0);
+            setAutoAliases("");
             setAliasItems([""]);
             setTags("");
-            setInitialState({ name: '', aliases: '', birthdate: '', sizes: '', avPeriod: '', tags: '', image: null, isFavorite: 0 });
+            setInitialState({ name: '', customAliases: '', birthdate: '', sizes: '', avPeriod: '', tags: '', image: null, isFavorite: 0 });
         }
     }, [actorId]);
 
@@ -225,7 +228,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     const isDirty = () => {
         if (!initialState) return false;
-        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.aliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || tags !== initialState.tags || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
+        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.customAliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || tags !== initialState.tags || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
     };
 
     const attemptClose = () => { if (isDirty()) setShowDirtyWarning(true); else onClose(); };
@@ -236,15 +239,17 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
         if (!rawName) return alert('請輸入姓名');
 
         // Feature: 自動解析名稱中的括號內容
-        // 修改: 僅提取別名，保留名字中的括號顯示
+        // 修改: 括號別名歸入「自訂別名」, 名稱保留括號顯示
         const parsed = parseNameWithAliases(rawName);
         const finalName = rawName; // 使用原始名稱 (包含括號)
         const extractedAliases = parsed.aliases;
 
-        // 合併現有的別名輸入與提取出的別名
-        const currentAliases = cleanAliases(aliasItems);
-        // 使用 Set 去重
-        const mergedAliases = [...new Set([...currentAliases, ...extractedAliases])].join(',');
+        // 自訂別名 = 表單輸入 + 名稱括號別名; 去重, 並排除與「自動別名」完全一致者 (沿用自動欄位)
+        const currentCustom = cleanAliases(aliasItems);
+        const autoList = (autoAliases || '').split(/[,，]/).map(s => s.trim()).filter(s => s);
+        const mergedCustom = [...new Set([...currentCustom, ...extractedAliases])]
+            .filter(a => !autoList.includes(a))
+            .join(',');
 
         // 檢查重複 (使用智慧比對)
         const duplicateId = findSmartMatchActor(db, finalName);
@@ -271,9 +276,10 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                     const avp = avPeriod.trim() || null;
                     const tg = tags.trim() || null;
                     if (isEdit) {
-                        db.prepare('UPDATE actors SET name = ?, aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ?, tags = ? WHERE id = ?').run(finalName, mergedAliases, isFavorite, bd, sz, avp, tg, actorId);
+                        // 注意: 不更新 aliases (自動別名由抓取管理, 表單唯讀), 僅寫入 custom_aliases
+                        db.prepare('UPDATE actors SET name = ?, custom_aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ?, tags = ? WHERE id = ?').run(finalName, mergedCustom, isFavorite, bd, sz, avp, tg, actorId);
                     } else {
-                        const info = db.prepare('INSERT INTO actors (actor_number, name, aliases, created_at, is_favorite, birthdate, sizes, av_period, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedAliases, Date.now(), isFavorite, bd, sz, avp, tg);
+                        const info = db.prepare('INSERT INTO actors (actor_number, name, custom_aliases, created_at, is_favorite, birthdate, sizes, av_period, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedCustom, Date.now(), isFavorite, bd, sz, avp, tg);
                         currentId = info.lastInsertRowid;
                     }
 
@@ -312,20 +318,28 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 <div className="filter-group">
                     <label className="filter-label">演員姓名</label>
                     <input className="filter-input" value=${name} onInput=${e => setName(e.target.value)} placeholder="輸入姓名..." />
-                    <small style=${{color: '#888', display: 'block', marginTop: '4px'}}>* 提示: 若輸入 "姓名 (別名)"，儲存時別名會自動加入別名欄位，且顯示名稱保留括號。</small>
+                    <small style=${{color: '#888', display: 'block', marginTop: '4px'}}>* 提示: 若輸入 "姓名 (別名)"，儲存時括號別名會加入「自訂別名」，且顯示名稱保留括號。</small>
                 </div>
                 <div className="filter-group">
-                    <label className="filter-label">別名 / 舊藝名 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(可新增多筆)</span></label>
+                    <label className="filter-label">別名 (自動抓取) <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>唯讀・由線上抓取管理</span></label>
+                    <div className="filter-input" style=${{ backgroundColor: '#eee', minHeight: '38px', display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', cursor: 'not-allowed' }}>
+                        ${autoAliases && autoAliases.split(/[,，]/).map(s => s.trim()).filter(s => s).length > 0
+                            ? autoAliases.split(/[,，]/).map(s => s.trim()).filter(s => s).map((a, i) => html`<span key=${i} style=${{ fontSize: '13px', padding: '2px 8px', borderRadius: '10px', backgroundColor: '#fff', border: '1px solid #ddd', color: '#555' }}>${a}</span>`)
+                            : html`<span style=${{ color: '#aaa' }}>—</span>`}
+                    </div>
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">自訂別名 / 舊藝名 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(可新增多筆・合併與手動輸入, 不受抓取影響)</span></label>
                     ${aliasItems.map((val, idx) => html`
                         <div key=${idx} style=${{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                            <input className="filter-input" style=${{ flex: 1 }} value=${val} onInput=${e => updateAlias(idx, e.target.value)} placeholder=${`別名 ${idx + 1}`} />
+                            <input className="filter-input" style=${{ flex: 1 }} value=${val} onInput=${e => updateAlias(idx, e.target.value)} placeholder=${`自訂別名 ${idx + 1}`} />
                             <button type="button" className="btn-ghost" title="移除此別名" style=${{ padding: '6px', flexShrink: 0, opacity: aliasItems.length <= 1 ? 0.3 : 1 }} disabled=${aliasItems.length <= 1} onClick=${() => removeAlias(idx)}>
                                 <${Trash2} size=${16} />
                             </button>
                         </div>
                     `)}
                     <button type="button" className="btn-block" style=${{ width: 'auto', padding: '6px 12px', display: 'inline-flex', alignItems: 'center' }} onClick=${addAlias}>
-                        <${Plus} size=${14} style=${{ marginRight: 4 }} /> 新增別名
+                        <${Plus} size=${14} style=${{ marginRight: 4 }} /> 新增自訂別名
                     </button>
                 </div>
                 <div className="filter-group">
@@ -381,11 +395,11 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
             if (!searchQuery.trim()) return;
             // 搜尋除了自己以外的演員
             const rows = db.prepare(`
-                SELECT * FROM actors 
-                WHERE (name LIKE ? OR aliases LIKE ?) 
+                SELECT * FROM actors
+                WHERE (name LIKE ? OR aliases LIKE ? OR custom_aliases LIKE ?)
                 AND id != ? AND is_deleted = 0
                 LIMIT 10
-            `).all(`%${searchQuery.trim()}%`, `%${searchQuery.trim()}%`, sourceActor.id);
+            `).all(`%${searchQuery.trim()}%`, `%${searchQuery.trim()}%`, `%${searchQuery.trim()}%`, sourceActor.id);
             setCandidates(rows);
             setTargetActor(null);
         }
@@ -397,19 +411,24 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
 
         try {
             db.transaction(() => {
-                // 1. 處理別名：將來源的名稱和別名都加入目標的別名清單
-                let targetAliases = targetActor.aliases ? targetActor.aliases.split(',').map(s => s.trim()).filter(s=>s) : [];
-                const sourceAliases = sourceActor.aliases ? sourceActor.aliases.split(',').map(s => s.trim()).filter(s=>s) : [];
-                
-                // 加入來源的本名
-                if (!targetAliases.includes(sourceActor.name)) targetAliases.push(sourceActor.name);
-                // 加入來源的別名
-                sourceAliases.forEach(a => {
-                    if (!targetAliases.includes(a)) targetAliases.push(a);
-                });
+                // 1. 處理別名: 來源的本名 / 別名 / 自訂別名 併入「目標的自訂別名 (custom_aliases)」。
+                //    與目標「自動別名 (aliases)」完全一致者略過 (沿用自動欄位); 自訂別名不受抓取覆蓋。
+                const targetAutoAliases = targetActor.aliases ? targetActor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+                const targetCustom = targetActor.custom_aliases ? targetActor.custom_aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
 
-                const newAliasesStr = targetAliases.join(',');
-                db.prepare('UPDATE actors SET aliases = ? WHERE id = ?').run(newAliasesStr, targetActor.id);
+                const incoming = [sourceActor.name];
+                if (sourceActor.aliases) incoming.push(...sourceActor.aliases.split(/[,，]/));
+                if (sourceActor.custom_aliases) incoming.push(...sourceActor.custom_aliases.split(/[,，]/));
+
+                for (const raw of incoming) {
+                    const v = (raw || '').trim();
+                    if (!v) continue;
+                    if (targetAutoAliases.includes(v)) continue; // 與自動別名完全一致 -> 沿用自動欄位
+                    if (targetCustom.includes(v)) continue;       // 已在自訂別名中
+                    targetCustom.push(v);
+                }
+
+                db.prepare('UPDATE actors SET custom_aliases = ? WHERE id = ?').run(targetCustom.join(','), targetActor.id);
 
                 // 2. 轉移作品關聯
                 const sourceLinks = db.prepare('SELECT work_id FROM work_actor_link WHERE actor_id = ?').all(sourceActor.id);
@@ -478,7 +497,7 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
                             ${candidates.map(c => html`
                                 <div className="menu-item" style=${{ padding: '8px', cursor: 'pointer', borderBottom: '1px solid #eee' }} onClick=${() => setTargetActor(c)}>
                                     <div style=${{ fontWeight: 'bold' }}>${c.name}</div>
-                                    <div style=${{ fontSize: '12px', color: '#666' }}>ID: ${c.actor_number} | 別名: ${c.aliases || '無'}</div>
+                                    <div style=${{ fontSize: '12px', color: '#666' }}>ID: ${c.actor_number} | 別名: ${[c.aliases, c.custom_aliases].filter(s => s && s.trim()).join(', ') || '無'}</div>
                                 </div>
                             `)}
                             ${candidates.length === 0 && searchQuery && html`<div style=${{ padding: '8px', color: '#999', textAlign: 'center' }}>無搜尋結果</div>`}
@@ -491,7 +510,7 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
                         <small style=${{color:'#666'}}>ID: ${targetActor.actor_number}</small>
                         <div style=${{ marginTop: '8px', fontSize: '12px', color: '#0d47a1' }}>
                             <ul style=${{ margin: '4px 0', paddingLeft: '20px' }}>
-                                <li>${sourceActor.name} 將自動加入別名</li>
+                                <li>${sourceActor.name} 將加入自訂別名</li>
                                 <li>${sourceActor.work_count || 0} 部作品將轉移至此</li>
                             </ul>
                         </div>
@@ -660,6 +679,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     const hasImg = imgSrc && !imageError;
 
     const aliasList = actor.aliases ? actor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+    const customAliasList = actor.custom_aliases ? actor.custom_aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
     const tagList = actor.tags ? actor.tags.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
 
     const labelStyle = { width: '110px', flexShrink: 0, color: '#888', fontSize: '14px', fontWeight: 'bold' };
@@ -725,6 +745,14 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                                 <div style=${{ flex: 1 }}>
                                     ${aliasList.length > 0
                                         ? aliasList.map((a, i) => html`<div key=${i} style=${{ marginBottom: i < aliasList.length - 1 ? '4px' : 0 }}>${a}</div>`)
+                                        : html`<span style=${emptyStyle}>—</span>`}
+                                </div>
+                            </div>
+                            <div style=${rowStyle}>
+                                <span style=${labelStyle}>自訂別名</span>
+                                <div style=${{ flex: 1 }}>
+                                    ${customAliasList.length > 0
+                                        ? customAliasList.map((a, i) => html`<div key=${i} style=${{ marginBottom: i < customAliasList.length - 1 ? '4px' : 0 }}>${a}</div>`)
                                         : html`<span style=${emptyStyle}>—</span>`}
                                 </div>
                             </div>
@@ -919,8 +947,8 @@ function ActorSystem({
                         const terms = appliedFilters.name.trim().split(/\s+/);
                         const subConditions = [];
                         terms.forEach(term => {
-                            subConditions.push(`(name LIKE ? OR aliases LIKE ?)`);
-                            params.push(`%${term}%`, `%${term}%`);
+                            subConditions.push(`(name LIKE ? OR aliases LIKE ? OR custom_aliases LIKE ?)`);
+                            params.push(`%${term}%`, `%${term}%`, `%${term}%`);
                         });
                         if (subConditions.length > 0) {
                             conditions.push(`(${subConditions.join(' AND ')})`);
@@ -1037,9 +1065,9 @@ function ActorSystem({
     };
 
     // 批量抓取所有演員資訊 (minnano-av)
-    const handleBatchScrape = async (onlyMissing = false) => {
+    const handleBatchScrape = async ({ onlyMissing = false, skipFailed = false } = {}) => {
         if (!db || scrapeProgress) return;
-        const scopeText = onlyMissing ? '尚未有資訊的演員' : '所有演員';
+        const scopeText = (onlyMissing ? '尚未有資訊的演員' : '所有演員') + (skipFailed ? ' (略過先前抓取失敗者)' : '');
         if (!confirm('將連線到 minnano-av.com 逐一抓取' + scopeText + '的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間/タグ 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
 
         let rows;
@@ -1048,9 +1076,11 @@ function ActorSystem({
             const missingClause = onlyMissing
                 ? " AND (birthdate IS NULL OR birthdate = '') AND (sizes IS NULL OR sizes = '') AND (av_period IS NULL OR av_period = '') AND (name_reading IS NULL OR name_reading = '')"
                 : '';
-            rows = db.prepare("SELECT * FROM actors WHERE is_deleted = 0" + missingClause + " ORDER BY actor_number ASC").all();
+            // 「跳過抓取失敗」: 排除先前已標記 scrape_failed = 1 的演員
+            const failedClause = skipFailed ? " AND (scrape_failed IS NULL OR scrape_failed = 0)" : '';
+            rows = db.prepare("SELECT * FROM actors WHERE is_deleted = 0" + missingClause + failedClause + " ORDER BY actor_number ASC").all();
         } catch (e) { alert('讀取演員清單失敗: ' + e.message); return; }
-        if (!rows.length) { alert(onlyMissing ? '沒有「尚未有資訊」的演員需要抓取。' : '沒有可抓取的演員。'); return; }
+        if (!rows.length) { alert(onlyMissing ? '沒有「尚未有資訊」的演員需要抓取。' : (skipFailed ? '沒有需要抓取的演員 (已排除抓取失敗者)。' : '沒有可抓取的演員。')); return; }
 
         scrapeCancelRef.current = false;
         let ok = 0, fail = 0;
@@ -1167,12 +1197,16 @@ function ActorSystem({
                             ${showScrapeMenu && html`
                                 <div style=${{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', boxShadow: '0 2px 10px rgba(0,0,0,0.12)', zIndex: 30, minWidth: '240px', overflow: 'hidden' }}>
                                     <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
-                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape(false); }}>
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ onlyMissing: false }); }}>
                                         批量抓取 (所有演員)
                                     </div>
-                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
-                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape(true); }}>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ onlyMissing: true }); }}>
                                         只抓尚未有資訊的演員
+                                    </div>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ skipFailed: true }); }}>
+                                        批量抓取 (跳過失敗項目)
                                     </div>
                                 </div>
                             `}
