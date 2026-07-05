@@ -7,7 +7,7 @@ const {
 
 const { db } = require('../utils/db');
 const {
-    hexToRgb, getDragAfterElement, stopPropagation, getContrastYIQ
+    hexToRgb, stopPropagation, getContrastYIQ
 } = require('../utils/helpers');
 const { Modal } = require('./Shared');
 
@@ -16,7 +16,7 @@ const PRESET_COLORS = [
     '#48DBFB', '#5F27CD', '#FF9FF3', '#576574'
 ];
 
-// 7. 標籤系統元件 (Tag System)
+// 7. 標籤系統元件 (Tag System) — 欄位/整列呈現 (放棄看板模式)
 
 function TagDeleteModal({ tagId, tagName, onClose, onDeleteSuccess }) {
     const [usageCount, setUsageCount] = React.useState(0);
@@ -71,7 +71,6 @@ function TagSystem({ canGoBack, onGoBack }) {
     const [pendingColor, setPendingColor] = React.useState(null);
     const [copiedColor, setCopiedColor] = React.useState(null);
     const boardRef = React.useRef(null);
-    const dragScrollRef = React.useRef({ isDown: false, startX: 0, scrollLeft: 0 });
     const lastDragOverTime = React.useRef(0);
     const addGroupInputRef = React.useRef(null);
     const addTagInputRef = React.useRef(null);
@@ -96,31 +95,16 @@ function TagSystem({ canGoBack, onGoBack }) {
     React.useEffect(() => { if (editingTarget) editInputRef.current?.focus(); }, [editingTarget]);
 
     React.useEffect(() => {
-        const handleMouseMove = (e) => {
-            if (!dragScrollRef.current.isDown || !boardRef.current) return;
-            e.preventDefault();
-            const x = e.pageX - boardRef.current.offsetLeft;
-            const walk = (x - dragScrollRef.current.startX) * 1.5;
-            boardRef.current.scrollLeft = dragScrollRef.current.scrollLeft - walk;
-        };
-        const handleMouseUp = () => { dragScrollRef.current.isDown = false; if (boardRef.current) boardRef.current.style.cursor = 'default'; };
         const handleClickOutside = (e) => {
             if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpenTagId(null);
             if (groupMenuRef.current && !groupMenuRef.current.contains(e.target)) setMenuOpenGroupId(null);
         };
-
-        document.addEventListener('mousemove', handleMouseMove);
-        document.addEventListener('mouseup', handleMouseUp);
         document.addEventListener('mousedown', handleClickOutside);
-        return () => {
-            document.removeEventListener('mousemove', handleMouseMove);
-            document.removeEventListener('mouseup', handleMouseUp);
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
     const handleScroll = () => {
-        // 如果外層捲動，自動關閉選單，避免選單浮在畫面上
+        // 外層捲動時自動關閉選單，避免選單浮在畫面上
         if (menuOpenGroupId || menuOpenTagId) {
             setMenuOpenGroupId(null);
             setMenuOpenTagId(null);
@@ -214,6 +198,18 @@ function TagSystem({ canGoBack, onGoBack }) {
         }
     };
 
+    // ---- 拖曳 (Drag & Drop) ----
+    // 找出水平排列 (可換行) 之標籤中，游標應插入於「哪個標籤之前」；回傳 null 代表插入尾端
+    const getTagInsertBefore = (container, x, y) => {
+        const els = [...container.querySelectorAll('.tag-item:not(.dragging)')];
+        for (const el of els) {
+            const box = el.getBoundingClientRect();
+            if (y < box.top) return el;                                  // 游標在此標籤所在列的上方
+            if (y <= box.bottom && x < box.left + box.width / 2) return el; // 同一列且位於此標籤左半
+        }
+        return null;
+    };
+
     const handleDragStart = (e, type, item) => {
         if (editingTarget || e.target.tagName === 'INPUT') { e.preventDefault(); return; }
         e.stopPropagation();
@@ -224,16 +220,13 @@ function TagSystem({ canGoBack, onGoBack }) {
 
     const handleDragEnd = () => { setDraggingItem(null); setDropTarget(null); };
 
-    const handleDragOver = (e, type, id, groupId) => {
-        e.preventDefault(); e.stopPropagation();
+    // 標籤組 (整列) 排序：以整列為單位垂直拖放
+    const handleGroupDragOver = (e, groupId) => {
+        if (!draggingItem || draggingItem.type !== 'group') return;
+        e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        const now = Date.now();
-        if (now - lastDragOverTime.current < 50) return;
-        lastDragOverTime.current = now;
-
-        if (draggingItem && draggingItem.id !== id) {
-            if (!dropTarget || dropTarget.id !== id) setDropTarget({ type, id, groupId });
-        }
+        if (draggingItem.id === groupId) return;
+        if (!dropTarget || dropTarget.type !== 'group' || dropTarget.id !== groupId) setDropTarget({ type: 'group', id: groupId });
     };
 
     const handleDropGroup = (e, targetGroupId) => {
@@ -250,6 +243,7 @@ function TagSystem({ canGoBack, onGoBack }) {
             db.transaction(() => { newList.forEach((g, idx) => stmt.run(idx + 1, g.id)); })();
             loadTags();
         } else if (draggingItem.type === 'tag' && draggingItem.group_id !== targetGroupId) {
+            // 將標籤拖放至某組別名稱欄 → 移動到該組別尾端
             const count = groups.find(g => g.id === targetGroupId).tags.length;
             db.prepare('UPDATE tags SET group_id = ?, sort_order = ? WHERE id = ?').run(targetGroupId, count + 1, draggingItem.id);
             loadTags();
@@ -257,218 +251,194 @@ function TagSystem({ canGoBack, onGoBack }) {
         setDraggingItem(null); setDropTarget(null);
     };
 
-    const handleDropTag = (e, targetTagId, targetGroupId) => {
-        e.preventDefault(); e.stopPropagation();
-        if (!draggingItem || draggingItem.type !== 'tag' || draggingItem.id === targetTagId) return;
-
+    // 標籤重新定位 (同組排序 / 跨組移動)：插入於 targetTagId 之前
+    const reorderTagBefore = (targetTagId, targetGroupId) => {
         db.transaction(() => {
             if (draggingItem.group_id !== targetGroupId) db.prepare('UPDATE tags SET group_id = ? WHERE id = ?').run(targetGroupId, draggingItem.id);
             const currentTags = db.prepare('SELECT * FROM tags WHERE group_id = ? AND is_visible = 1 ORDER BY sort_order ASC').all(targetGroupId);
             const filtered = currentTags.filter(t => t.id !== draggingItem.id);
-            let newHoverIdx = filtered.findIndex(t => t.id === targetTagId);
-            if (newHoverIdx === -1) newHoverIdx = filtered.length;
-            filtered.splice(newHoverIdx, 0, { id: draggingItem.id });
+            let hoverIdx = filtered.findIndex(t => t.id === targetTagId);
+            if (hoverIdx === -1) hoverIdx = filtered.length;
+            filtered.splice(hoverIdx, 0, { id: draggingItem.id });
             const stmt = db.prepare('UPDATE tags SET sort_order = ? WHERE id = ?');
             filtered.forEach((t, idx) => stmt.run(idx + 1, t.id));
         })();
         loadTags(); setDraggingItem(null); setDropTarget(null);
     };
 
-    const handleListDragOver = (e, groupId) => {
-        e.preventDefault(); e.stopPropagation();
+    const reorderTagToEnd = (targetGroupId) => {
+        db.transaction(() => {
+            if (draggingItem.group_id !== targetGroupId) db.prepare('UPDATE tags SET group_id = ? WHERE id = ?').run(targetGroupId, draggingItem.id);
+            const currentTags = db.prepare('SELECT * FROM tags WHERE group_id = ? AND is_visible = 1 ORDER BY sort_order ASC').all(targetGroupId);
+            const filtered = currentTags.filter(t => t.id !== draggingItem.id);
+            filtered.push({ id: draggingItem.id });
+            const stmt = db.prepare('UPDATE tags SET sort_order = ? WHERE id = ?');
+            filtered.forEach((t, idx) => stmt.run(idx + 1, t.id));
+        })();
+        loadTags(); setDraggingItem(null); setDropTarget(null);
+    };
+
+    const handleTagsDragOver = (e, groupId) => {
+        // 僅處理標籤拖曳；標籤組拖曳則讓事件冒泡到整列 (handleGroupDragOver)
         if (!draggingItem || draggingItem.type !== 'tag') return;
-        const container = e.currentTarget;
-        const rect = container.getBoundingClientRect();
-        const scrollThreshold = 80;
-        const scrollSpeed = 15;
-
-        if (e.clientY < rect.top + scrollThreshold) { container.scrollTop -= scrollSpeed; }
-        else if (e.clientY > rect.bottom - scrollThreshold) { container.scrollTop += scrollSpeed; }
-
+        e.preventDefault(); e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
         const now = Date.now();
         if (now - lastDragOverTime.current < 50) return;
         lastDragOverTime.current = now;
 
-        const afterElement = getDragAfterElement(container, e.clientY);
-        if (afterElement) {
-            const targetId = parseInt(afterElement.getAttribute('data-id'));
+        const before = getTagInsertBefore(e.currentTarget, e.clientX, e.clientY);
+        if (before) {
+            const targetId = parseInt(before.getAttribute('data-id'));
             if (targetId && targetId !== draggingItem.id) {
-                if (!dropTarget || dropTarget.id !== targetId) setDropTarget({ type: 'tag', id: targetId, groupId });
+                if (!dropTarget || dropTarget.id !== targetId || dropTarget.groupId !== groupId) setDropTarget({ type: 'tag', id: targetId, groupId });
             }
         } else {
-            if (!dropTarget || dropTarget.id !== -1) setDropTarget({ type: 'tag', id: -1, groupId });
+            if (!dropTarget || dropTarget.id !== -1 || dropTarget.groupId !== groupId) setDropTarget({ type: 'tag', id: -1, groupId });
         }
     };
 
-    const handleListDrop = (e, groupId) => {
-        e.preventDefault(); e.stopPropagation();
+    const handleTagsDrop = (e, groupId) => {
         if (!draggingItem || draggingItem.type !== 'tag') return;
-        const container = e.currentTarget;
-        const afterElement = getDragAfterElement(container, e.clientY);
-
-        if (afterElement) handleDropTag(e, parseInt(afterElement.getAttribute('data-id')), groupId);
-        else {
-            db.transaction(() => {
-                if (draggingItem.group_id !== groupId) db.prepare('UPDATE tags SET group_id = ? WHERE id = ?').run(groupId, draggingItem.id);
-                const currentTags = db.prepare('SELECT * FROM tags WHERE group_id = ? AND is_visible = 1 ORDER BY sort_order ASC').all(groupId);
-                const filtered = currentTags.filter(t => t.id !== draggingItem.id);
-                filtered.push({ id: draggingItem.id });
-                const stmt = db.prepare('UPDATE tags SET sort_order = ? WHERE id = ?');
-                filtered.forEach((t, idx) => stmt.run(idx + 1, t.id));
-            })();
-            loadTags(); setDraggingItem(null); setDropTarget(null);
+        e.preventDefault(); e.stopPropagation();
+        const before = getTagInsertBefore(e.currentTarget, e.clientX, e.clientY);
+        if (before) {
+            const targetId = parseInt(before.getAttribute('data-id'));
+            if (targetId === draggingItem.id) { setDraggingItem(null); setDropTarget(null); return; }
+            reorderTagBefore(targetId, groupId);
+        } else {
+            reorderTagToEnd(groupId);
         }
     };
 
-    const handleBoardMouseDown = (e) => {
-        if (e.button === 2) {
-            dragScrollRef.current.isDown = true;
-            dragScrollRef.current.startX = e.pageX - boardRef.current.offsetLeft;
-            dragScrollRef.current.scrollLeft = boardRef.current.scrollLeft;
-            boardRef.current.style.cursor = 'grabbing';
-        }
+    // 拖曳接近上/下緣時自動捲動整個列表
+    const handleBoardDragOver = (e) => {
+        if (!draggingItem || !boardRef.current) return;
+        const rect = boardRef.current.getBoundingClientRect();
+        const threshold = 60, speed = 14;
+        if (e.clientY < rect.top + threshold) boardRef.current.scrollTop -= speed;
+        else if (e.clientY > rect.bottom - threshold) boardRef.current.scrollTop += speed;
     };
 
     // 修正: 確保 input 輸入時文字為深色，不被外層顏色繼承污染
     const inputProps = { className: "quick-input", autoFocus: true, style: { color: '#333333' }, onClick: e => e.stopPropagation(), onDragStart: (e) => e.preventDefault(), onMouseDown: (e) => e.stopPropagation() };
 
+    const renderColorMenu = (target, onApply, onCancel, onDelete, deleteLabel) => html`
+        <div className="kebab-menu" ref=${target === 'group' ? groupMenuRef : menuRef} onClick=${stopPropagation} style=${{ position: 'fixed', top: menuPos.y, left: menuPos.x, zIndex: 9999, width: 240, backgroundColor: '#ffffff', color: '#333333', padding: '12px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'default', whiteSpace: 'normal', textAlign: 'left' }}>
+            <div style=${{ fontSize: 13, fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>${target === 'group' ? '群組設定' : '標籤設定'}</div>
+            <div style=${{ fontSize: 12, color: '#666', marginBottom: 6 }}>顏色標記</div>
+            <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                ${PRESET_COLORS.map(color => html`<div style=${{ width: 24, height: 24, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
+                <div style=${{ width: 24, height: 24, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${14}/></div>
+            </div>
+            <button className="btn-block" style=${{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '8px', padding: '6px', backgroundColor: '#f8f9fa', border: '1px solid #ddd' }} onClick=${() => (target === 'group' ? groupColorInputRef : colorInputRef).current.click()}>
+                <${Palette} size=${14}/> 自訂顏色
+                <input ref=${target === 'group' ? groupColorInputRef : colorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} />
+            </button>
+            <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
+
+            <div style=${{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12 }} onClick=${() => { if (pendingColor) { setCopiedColor(pendingColor); } }} title=${pendingColor ? `複製: ${pendingColor}` : '尚無顏色可複製'} disabled=${!pendingColor}>
+                    複製代碼 ${pendingColor ? pendingColor.toUpperCase() : ''}
+                </button>
+                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12, opacity: copiedColor ? 1 : 0.45 }} onClick=${() => { if (copiedColor) setPendingColor(copiedColor); }} title=${copiedColor ? `貼上: ${copiedColor}` : '尚未複製顏色'} disabled=${!copiedColor}>
+                    貼上代碼 ${copiedColor ? copiedColor.toUpperCase() : ''}
+                </button>
+            </div>
+            <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}>
+                <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${onApply}>套用顏色</button>
+                <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${onCancel}>取消</button>
+            </div>
+
+            <button className="btn-block" style=${{ width: '100%', backgroundColor: '#dc3545', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', border: 'none' }} onClick=${onDelete}>
+                <${Trash2} size=${14} /> ${deleteLabel}
+            </button>
+        </div>`;
+
     return html`
-        <div style=${{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-            ${canGoBack && html`
-                <div style=${{ padding: '8px 16px', flexShrink: 0 }}>
+        <div className="tag-system-wrap">
+            <div className="tag-toolbar">
+                ${canGoBack && html`
                     <button className="btn-ghost" onClick=${onGoBack} title="返回上一頁" style=${{ padding: '4px', display: 'flex', alignItems: 'center' }}>
                         <${ArrowLeft} size=${18} />
                     </button>
-                </div>
-            `}
-            <div className="tag-board" style=${{ flex: 1, minHeight: 0 }} ref=${boardRef} onMouseDown=${handleBoardMouseDown} onScroll=${handleScroll} onContextMenu=${e => e.preventDefault()}>
-            ${groups.map(group => {
-        const isGroupEditing = editingTarget?.type === 'group' && editingTarget.id === group.id;
-        const isGroupMenuOpen = menuOpenGroupId === group.id;
-
-        // 套用高對比文字顏色 (群組)
-        const groupStyle = group.color ? { backgroundColor: group.color, color: getContrastYIQ(group.color) } : {};
-        const menuBtnStyle = group.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 } : {};
-
-        return html`
-                <div className="tag-group ${draggingItem?.type === 'group' && draggingItem.id === group.id ? 'dragging' : ''}" style=${groupStyle} key=${group.id} draggable=${!isGroupEditing} onDragStart=${e => handleDragStart(e, 'group', group)} onDragEnd=${handleDragEnd} onDragOver=${e => handleDragOver(e, 'group', group.id, null)} onDrop=${e => handleDropGroup(e, group.id)}>
-                    <div className="tag-group-header">
-                        ${isGroupEditing ?
-                html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
-                html`<span style=${{ flex: 1 }} onClick=${() => startEditing('group', group.id, group.name)}>${group.name}</span>`
-            }
-                        <div>
-                            <button className="btn-ghost ${isGroupMenuOpen ? 'active' : ''}" style=${menuBtnStyle} onClick=${e => handleOpenGroupMenu(group, e)}>
-                                <${MoreVertical} size=${16} />
-                            </button>
-                            ${isGroupMenuOpen && html`
-                                <div className="kebab-menu" ref=${groupMenuRef} onClick=${stopPropagation} style=${{ position: 'fixed', top: menuPos.y, left: menuPos.x, zIndex: 9999, width: 240, backgroundColor: '#ffffff', color: '#333333', padding: '12px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'default', whiteSpace: 'normal', textAlign: 'left' }}>
-                                    <div style=${{ fontSize: 13, fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>群組設定</div>
-                                    <div style=${{ fontSize: 12, color: '#666', marginBottom: 6 }}>顏色標記</div>
-                                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                                        ${PRESET_COLORS.map(color => html`<div style=${{ width: 24, height: 24, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
-                                        <div style=${{ width: 24, height: 24, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${14}/></div>
-                                    </div>
-                                    <button className="btn-block" style=${{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '8px', padding: '6px', backgroundColor: '#f8f9fa', border: '1px solid #ddd' }} onClick=${() => groupColorInputRef.current.click()}>
-                                        <${Palette} size=${14}/> 自訂顏色
-                                        <input ref=${groupColorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} />
-                                    </button>
-                                    <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
-                                    
-                                    <div style=${{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                                        <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12 }} onClick=${() => { if (pendingColor) { setCopiedColor(pendingColor); } }} title=${pendingColor ? `複製: ${pendingColor}` : '尚無顏色可複製'} disabled=${!pendingColor}>
-                                            複製代碼 ${pendingColor ? pendingColor.toUpperCase() : ''}
-                                        </button>
-                                        <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12, opacity: copiedColor ? 1 : 0.45 }} onClick=${() => { if (copiedColor) setPendingColor(copiedColor); }} title=${copiedColor ? `貼上: ${copiedColor}` : '尚未複製顏色'} disabled=${!copiedColor}>
-                                            貼上代碼 ${copiedColor ? copiedColor.toUpperCase() : ''}
-                                        </button>
-                                    </div>
-                                    <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
-                                        <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveGroupColor(group.id)}>套用顏色</button> 
-                                        <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenGroupId(null)}>取消</button>
-                                    </div>
-                                    
-                                    <button className="btn-block" style=${{ width: '100%', backgroundColor: '#dc3545', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', border: 'none' }} onClick=${() => handleDeleteGroup(group.id)}>
-                                        <${Trash2} size=${14} /> 刪除此群組
-                                    </button>
-                                </div>
-                            `}
-                        </div>
-                    </div>
-                    <div className="tag-list" onScroll=${handleScroll} onDragOver=${e => handleListDragOver(e, group.id)} onDrop=${e => handleListDrop(e, group.id)}>
-                        ${group.tags.map(tag => {
-                const isTagEditing = editingTarget?.type === 'tag' && editingTarget.id === tag.id;
-                const isMenuOpen = menuOpenTagId === tag.id;
-
-                // 修正: 如果沒有設定顏色，強制使用深灰色阻斷群組顏色的繼承
-                const tagStyle = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color) } : { color: '#333333' };
-                const tagMenuBtnStyle = tag.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : { color: '#333333' };
-
-                return html`
-                            ${dropTarget?.type === 'tag' && dropTarget.id === tag.id && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
-                            <div className="tag-item ${draggingItem?.id === tag.id ? 'dragging' : ''}" style=${tagStyle} key=${tag.id} data-id=${tag.id} draggable=${!isTagEditing} onDragStart=${e => handleDragStart(e, 'tag', tag)} onDragEnd=${handleDragEnd} onDragOver=${e => handleDragOver(e, 'tag', tag.id, group.id)} onDrop=${e => handleDropTag(e, tag.id, group.id)}>
-                                ${isTagEditing ?
-                        html`<input ref=${editInputRef} {...inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
-                        html`<span style=${{ flex: 1 }} onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name}</span>`
-                    }
-                                <div>
-                                    <button className="tag-menu-btn ${isMenuOpen ? 'active' : ''}" style=${tagMenuBtnStyle} onClick=${e => handleOpenTagMenu(tag, e)}><${MoreVertical} size=${14} /></button>
-                                    ${isMenuOpen && html`
-                                        <div className="kebab-menu" ref=${menuRef} onClick=${stopPropagation} style=${{ position: 'fixed', top: menuPos.y, left: menuPos.x, zIndex: 9999, width: 240, backgroundColor: '#ffffff', color: '#333333', padding: '12px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', cursor: 'default', whiteSpace: 'normal', textAlign: 'left' }}>
-                                            <div style=${{ fontSize: 13, fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>標籤設定</div>
-                                            <div style=${{ fontSize: 12, color: '#666', marginBottom: 6 }}>顏色標記</div>
-                                            <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                                                ${PRESET_COLORS.map(color => html`<div style=${{ width: 24, height: 24, borderRadius: 4, backgroundColor: color, cursor: 'pointer', border: pendingColor === color ? '2px solid #333' : '1px solid #ddd' }} onClick=${() => setPendingColor(color)} />`)}
-                                                <div style=${{ width: 24, height: 24, borderRadius: 4, background: 'linear-gradient(135deg, #fff 0%, #eee 100%)', cursor: 'pointer', border: pendingColor === null ? '2px solid #333' : '1px solid #ddd', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick=${() => setPendingColor(null)} title="清除顏色"><${X} size=${14}/></div>
-                                            </div>
-                                            <button className="btn-block" style=${{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '8px', padding: '6px', backgroundColor: '#f8f9fa', border: '1px solid #ddd' }} onClick=${() => colorInputRef.current.click()}>
-                                                <${Palette} size=${14}/> 自訂顏色
-                                                <input ref=${colorInputRef} type="color" style=${{ visibility: 'hidden', width: 0, height: 0, position: 'absolute' }} onChange=${e => setPendingColor(e.target.value)} />
-                                            </button>
-                                            <div style=${{ fontSize: 12, color: '#666', marginBottom: 12, textAlign: 'center' }}>選定: ${hexToRgb(pendingColor)}</div>
-                                            
-                                            <div style=${{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                                                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12 }} onClick=${() => { if (pendingColor) { setCopiedColor(pendingColor); } }} title=${pendingColor ? `複製: ${pendingColor}` : '尚無顏色可複製'} disabled=${!pendingColor}>
-                                                    複製代碼 ${pendingColor ? pendingColor.toUpperCase() : ''}
-                                                </button>
-                                                <button className="btn-block" style=${{ flex: 1, padding: '5px', fontSize: 12, opacity: copiedColor ? 1 : 0.45 }} onClick=${() => { if (copiedColor) setPendingColor(copiedColor); }} title=${copiedColor ? `貼上: ${copiedColor}` : '尚未複製顏色'} disabled=${!copiedColor}>
-                                                    貼上代碼 ${copiedColor ? copiedColor.toUpperCase() : ''}
-                                                </button>
-                                            </div>
-                                            <div style=${{ display: 'flex', gap: 8, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 12 }}> 
-                                                <button className="btn-primary" style=${{ flex: 1, padding: '6px' }} onClick=${() => saveTagColor(tag.id)}>套用顏色</button> 
-                                                <button className="btn-block" style=${{ flex: 1, padding: '6px' }} onClick=${() => setMenuOpenTagId(null)}>取消</button>
-                                            </div>
-                                            
-                                            <button className="btn-block" style=${{ width: '100%', backgroundColor: '#dc3545', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', border: 'none' }} onClick=${() => handleDeleteTag(tag)}>
-                                                <${Trash2} size=${14} /> 刪除此標籤
-                                            </button>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>`;
-            })}
-                        ${dropTarget?.id === -1 && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
-                    </div>
-                    <div className="add-btn-area">
-                        ${addingTagGroupId === group.id ?
-                html`<input ref=${addTagInputRef} {...inputProps} placeholder="輸入標籤..." onKeyDown=${e => handleCreateTag(e, group.id)} onBlur=${() => setAddingTagGroupId(null)} />` :
-                // 修正: 將新增標籤按鈕設定為透明背景，並以組別的高對比色作為文字與邊框，避免白底白字
-                html`<button className="btn-block" onClick=${() => setAddingTagGroupId(group.id)} style=${group.color ? { backgroundColor: 'transparent', color: getContrastYIQ(group.color), borderColor: getContrastYIQ(group.color) } : { color: '#333333' }}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
-            }
-                    </div>
-                </div>`;
-    })}
-            <div style=${{ flexShrink: 0 }}>
-                <div className="add-group-btn" onClick=${() => setIsAddingGroup(true)}>
-                    ${isAddingGroup ?
-            html`<input ref=${addGroupInputRef} {...inputProps} placeholder="輸入組別名稱..." onKeyDown=${handleCreateGroup} onBlur=${() => setIsAddingGroup(false)} />` :
-            html`<div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'default' }} onMouseDown=${(e) => e.preventDefault()}><${Plus} size=${20} /> 新增組別</div>`
+                `}
+                ${isAddingGroup ?
+            html`<input ref=${addGroupInputRef} ...${inputProps} placeholder="輸入組別名稱..." style=${{ color: '#333333', width: 240 }} onKeyDown=${handleCreateGroup} onBlur=${() => setIsAddingGroup(false)} />` :
+            html`<button className="tag-add-group-btn" onClick=${() => setIsAddingGroup(true)}><${Plus} size=${18} /> 新增標籤組</button>`
         }
-                </div>
             </div>
+
+            <div className="tag-board" ref=${boardRef} onScroll=${handleScroll} onDragOver=${handleBoardDragOver}>
+                ${groups.map(group => {
+            const isGroupEditing = editingTarget?.type === 'group' && editingTarget.id === group.id;
+            const isGroupMenuOpen = menuOpenGroupId === group.id;
+            const isGroupDragging = draggingItem?.type === 'group' && draggingItem.id === group.id;
+            const isGroupDropTarget = dropTarget?.type === 'group' && dropTarget.id === group.id;
+
+            // 套用高對比文字顏色 (群組名稱欄)
+            const groupNameStyle = group.color ? { backgroundColor: group.color, color: getContrastYIQ(group.color) } : {};
+            const menuBtnStyle = group.color ? { backgroundColor: '#fff', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 } : {};
+
+            return html`
+                    <div className="tag-group-row ${isGroupDragging ? 'dragging' : ''} ${isGroupDropTarget ? 'drop-above' : ''}" key=${group.id}
+                        onDragOver=${e => handleGroupDragOver(e, group.id)} onDrop=${e => handleDropGroup(e, group.id)}>
+
+                        <div className="tag-group-name" style=${groupNameStyle} draggable=${!isGroupEditing}
+                            onDragStart=${e => handleDragStart(e, 'group', group)} onDragEnd=${handleDragEnd}>
+                            ${isGroupEditing ?
+                    html`<input ref=${editInputRef} ...${inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
+                    html`<span style=${{ flex: 1 }} onClick=${() => startEditing('group', group.id, group.name)}>${group.name}</span>`
+                }
+                            <div>
+                                <button className="btn-ghost ${isGroupMenuOpen ? 'active' : ''}" style=${menuBtnStyle} onClick=${e => handleOpenGroupMenu(group, e)}>
+                                    <${MoreVertical} size=${16} />
+                                </button>
+                                ${isGroupMenuOpen && renderColorMenu('group', () => saveGroupColor(group.id), () => setMenuOpenGroupId(null), () => handleDeleteGroup(group.id), '刪除此群組')}
+                            </div>
+                        </div>
+
+                        <div className="tag-group-tags" onDragOver=${e => handleTagsDragOver(e, group.id)} onDrop=${e => handleTagsDrop(e, group.id)}>
+                            ${group.tags.map(tag => {
+                    const isTagEditing = editingTarget?.type === 'tag' && editingTarget.id === tag.id;
+                    const isMenuOpen = menuOpenTagId === tag.id;
+
+                    // 修正: 如果沒有設定顏色，強制使用深灰色，避免顏色繼承問題
+                    const tagStyle = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: 'transparent' } : { color: '#333333' };
+                    const tagMenuBtnStyle = tag.color ? { backgroundColor: 'rgba(255,255,255,0.85)', color: '#333', border: '1px solid rgba(0,0,0,0.2)', borderRadius: 4 } : { color: '#333333' };
+
+                    return html`
+                                ${dropTarget?.type === 'tag' && dropTarget.id === tag.id && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
+                                <div className="tag-item ${draggingItem?.type === 'tag' && draggingItem.id === tag.id ? 'dragging' : ''}" style=${tagStyle} key=${tag.id} data-id=${tag.id} draggable=${!isTagEditing}
+                                    onDragStart=${e => handleDragStart(e, 'tag', tag)} onDragEnd=${handleDragEnd}>
+                                    ${isTagEditing ?
+                        html`<input ref=${editInputRef} ...${inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
+                        html`<span onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name}</span>`
+                    }
+                                    <div style=${{ display: 'flex', alignItems: 'center' }}>
+                                        <button className="tag-menu-btn ${isMenuOpen ? 'active' : ''}" style=${tagMenuBtnStyle} onClick=${e => handleOpenTagMenu(tag, e)}><${MoreVertical} size=${14} /></button>
+                                        ${isMenuOpen && renderColorMenu('tag', () => saveTagColor(tag.id), () => setMenuOpenTagId(null), () => handleDeleteTag(tag), '刪除此標籤')}
+                                    </div>
+                                </div>`;
+                })}
+                            ${dropTarget?.type === 'tag' && dropTarget.id === -1 && dropTarget.groupId === group.id && html`<div className="drop-placeholder" />`}
+
+                            <div className="tag-add-area">
+                                ${addingTagGroupId === group.id ?
+                    html`<input ref=${addTagInputRef} ...${inputProps} placeholder="輸入標籤..." onKeyDown=${e => handleCreateTag(e, group.id)} onBlur=${() => setAddingTagGroupId(null)} />` :
+                    html`<button className="btn-block tag-add-btn" onClick=${() => setAddingTagGroupId(group.id)}><${Plus} size=${16} style=${{ marginRight: 4 }} /> 新增標籤</button>`
+                }
+                            </div>
+                        </div>
+                    </div>`;
+        })}
+
+                ${groups.length === 0 && !isAddingGroup && html`
+                    <div className="tag-empty-hint">尚無標籤組，點選上方「新增標籤組」開始建立。</div>
+                `}
+            </div>
+
             ${deletingTag && html`<${TagDeleteModal} tagId=${deletingTag.id} tagName=${deletingTag.name} onClose=${() => setDeletingTag(null)} onDeleteSuccess=${loadTags} />`}
-            </div>
         </div>`;
 }
 
