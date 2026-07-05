@@ -728,8 +728,6 @@ body {
 
 /* Tag Selector Chips */
 .tag-selector-container {
-    max-height: 300px;
-    overflow-y: auto;
     border: 1px solid #eee;
     padding: 8px;
     border-radius: 4px;
