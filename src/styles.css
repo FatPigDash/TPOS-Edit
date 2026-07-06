@@ -497,6 +497,9 @@ body {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     overflow: hidden;
     min-height: 96px;
+    /* 不隨父層 flex 壓縮: 否則多列標籤組會被壓到 min-height 後,
+       因 overflow:hidden 裁掉底部的「新增標籤」按鈕 */
+    flex-shrink: 0;
     transition: box-shadow 0.15s;
 }
 
