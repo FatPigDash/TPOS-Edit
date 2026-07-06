@@ -342,6 +342,137 @@ ipcMain.handle('play-video', async (event, filePath) => {
   }
 });
 
+// 「識別碼 -> 所屬資料夾名稱」對照表快取 (供卡片顯示檔案所在資料夾)
+// 每次卡片列表載入都掃描整個根目錄成本過高, 故加上短 TTL 快取; 檔案在軟體內被移動時會主動失效
+let workFoldersCache = { time: 0, root: null, map: null };
+const WORK_FOLDERS_TTL = 15000;
+
+function invalidateWorkFoldersCache() {
+  workFoldersCache = { time: 0, root: null, map: null };
+}
+
+// 掃描根目錄一次, 建立 normalizedCode -> [資料夾名稱] 對照表
+function buildWorkFoldersMap(root) {
+  const map = {};
+  const add = (key, folder) => {
+    if (!key) return;
+    if (!map[key]) map[key] = new Set();
+    map[key].add(folder);
+  };
+  for (const full of walkVideoFiles(root)) {
+    const dir = path.dirname(full);
+    const folderName = path.resolve(dir) === path.resolve(root) ? '（根目錄）' : path.basename(dir);
+    for (const code of extractBracketCodes(path.basename(full))) {
+      const n = normalizeCode(code);
+      add(n, folderName);
+      add(n.replace(/-/g, ''), folderName); // 同時以去連字號形式建鍵, 供比對容錯
+    }
+  }
+  const out = {};
+  for (const k in map) out[k] = Array.from(map[k]);
+  return out;
+}
+
+// IPC: 取得「識別碼 -> 所屬資料夾名稱」對照表 (opts.force 可強制重新掃描)
+ipcMain.handle('get-work-folders', async (event, opts) => {
+  const root = getAppRoot();
+  const force = !!(opts && opts.force);
+  const now = Date.now();
+  if (!force && workFoldersCache.map && workFoldersCache.root === root && (now - workFoldersCache.time) < WORK_FOLDERS_TTL) {
+    return { root, map: workFoldersCache.map };
+  }
+  const map = buildWorkFoldersMap(root);
+  workFoldersCache = { time: now, root, map };
+  return { root, map };
+});
+
+// 取得不重複的目標路徑 (若目的資料夾已有同名檔則加上 (n))
+function getUniqueTargetPath(dir, fileName) {
+  const ext = path.extname(fileName);
+  const base = fileName.slice(0, fileName.length - ext.length);
+  let candidate = fileName;
+  let i = 1;
+  while (fs.existsSync(path.join(dir, candidate))) {
+    candidate = `${base} (${i})${ext}`;
+    i++;
+  }
+  return path.join(dir, candidate);
+}
+
+// IPC: 將作品的實體檔案 (影片及同資料夾內同主檔名的附隨檔, 如封面圖) 移動到指定資料夾
+// 安全限制: 目的資料夾必須位於軟體根目錄範圍內
+ipcMain.handle('move-work-files', async (event, { paths, targetDir }) => {
+  try {
+    if (!targetDir) return { ok: false, message: '未指定目的資料夾' };
+
+    const resolvedRoot = path.resolve(getAppRoot());
+    const resolvedTarget = path.resolve(targetDir);
+
+    // 安全檢查: 目的資料夾必須是根目錄本身或其子資料夾
+    const withinRoot = resolvedTarget === resolvedRoot ||
+      resolvedTarget.startsWith(resolvedRoot + path.sep);
+    if (!withinRoot) {
+      return { ok: false, message: '目的資料夾必須在軟體根目錄範圍內' };
+    }
+
+    if (!fs.existsSync(resolvedTarget)) {
+      fs.mkdirSync(resolvedTarget, { recursive: true });
+    }
+
+    const srcList = (Array.isArray(paths) ? paths : [paths]).filter(Boolean);
+    if (srcList.length === 0) return { ok: false, message: '沒有要移動的檔案' };
+
+    // 展開待移動清單: 每個影片檔 + 同資料夾內同主檔名 (不含副檔名) 的附隨檔
+    const toMove = new Set();
+    for (const src of srcList) {
+      if (!fs.existsSync(src)) continue;
+      toMove.add(path.resolve(src));
+      const dir = path.dirname(src);
+      const baseNoExt = path.basename(src, path.extname(src));
+      let siblings = [];
+      try { siblings = fs.readdirSync(dir); } catch (e) { /* 讀取失敗則只移動影片檔本身 */ }
+      for (const name of siblings) {
+        if (path.basename(name, path.extname(name)) !== baseNoExt) continue;
+        const full = path.resolve(path.join(dir, name));
+        try {
+          if (fs.statSync(full).isFile()) toMove.add(full);
+        } catch (e) { /* 略過無法讀取的項目 */ }
+      }
+    }
+
+    const moved = [];
+    const skipped = [];
+    const errors = [];
+    for (const src of toMove) {
+      if (path.resolve(path.dirname(src)) === resolvedTarget) {
+        skipped.push({ file: path.basename(src) });
+        continue;
+      }
+      const destPath = getUniqueTargetPath(resolvedTarget, path.basename(src));
+      try {
+        fs.renameSync(src, destPath);
+        moved.push({ from: src, to: destPath });
+      } catch (e) {
+        // 跨磁碟等情況 rename 會失敗, 退回複製後刪除
+        try {
+          fs.copyFileSync(src, destPath);
+          fs.unlinkSync(src);
+          moved.push({ from: src, to: destPath });
+        } catch (e2) {
+          errors.push({ file: path.basename(src), message: e2.message });
+        }
+      }
+    }
+
+    // 檔案位置已變動, 使卡片資料夾對照表快取失效
+    if (moved.length > 0) invalidateWorkFoldersCache();
+
+    return { ok: errors.length === 0, moved, skipped, errors, targetDir: resolvedTarget };
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
 

@@ -7,7 +7,7 @@ const { webUtils, ipcRenderer } = require('electron');
 const {
     Search, ChevronDown, ChevronRight: ChevronRightIcon, ChevronLeft: ChevronLeftIcon, X,
     Star, ArrowLeft, Edit, Film, AlertTriangle, Check,
-    Save, Plus, Trash2, Download, PanelLeft, Bookmark, Play
+    Save, Plus, Trash2, Download, PanelLeft, Bookmark, Play, FolderInput, Folder
 } = require('lucide-react');
 
 const { db, worksImgDir, actorsImgDir } = require('../utils/db');
@@ -754,6 +754,65 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     const [showDirtyWarning, setShowDirtyWarning] = React.useState(false);
     const [isScraperOpen, setIsScraperOpen] = React.useState(false);
     const { isPlaying, videoCandidates, setVideoCandidates, playPath, findAndPlay } = useVideoPlayer();
+    // 移動實體檔案: moveState 為 null 或 { root, files: [{ absolutePath, relativePath, fileName, checked }] }
+    const [moveState, setMoveState] = React.useState(null);
+    const [isMoving, setIsMoving] = React.useState(false);
+
+    // 開啟「移動檔案」視窗: 依識別碼比對根目錄影片, 列出可移動的檔案供勾選
+    const openMoveFiles = async () => {
+        if (!formData.work_number) { alert('此作品沒有識別碼，無法比對影片。'); return; }
+        setIsMoving(true);
+        try {
+            const res = await ipcRenderer.invoke('find-work-videos', { workNumber: formData.work_number, name: formData.name });
+            const candidates = (res && res.candidates) || [];
+            if (candidates.length === 0) {
+                alert(`在軟體根目錄內找不到識別碼為「${formData.work_number}」的影片檔。`);
+                return;
+            }
+            setMoveState({
+                root: res.root,
+                files: candidates.map(c => ({ absolutePath: c.absolutePath, relativePath: c.relativePath, fileName: c.fileName, checked: true }))
+            });
+        } catch (e) {
+            alert('搜尋影片失敗: ' + e.message);
+        } finally {
+            setIsMoving(false);
+        }
+    };
+
+    // 選擇目的資料夾 (限根目錄範圍內) 並執行移動
+    const handleConfirmMove = async () => {
+        if (!moveState) return;
+        const selected = moveState.files.filter(f => f.checked);
+        if (selected.length === 0) { alert('請至少選擇一個檔案'); return; }
+
+        const { dialog } = require('@electron/remote');
+        const result = await dialog.showOpenDialog({
+            title: '選擇移動目的地 (需在軟體根目錄範圍內)',
+            defaultPath: moveState.root,
+            properties: ['openDirectory', 'createDirectory']
+        });
+        if (result.canceled || !result.filePaths || !result.filePaths[0]) return;
+
+        const r = await ipcRenderer.invoke('move-work-files', {
+            paths: selected.map(f => f.absolutePath),
+            targetDir: result.filePaths[0]
+        });
+
+        if (!r || (r.message && (!r.moved || r.moved.length === 0))) {
+            alert('移動失敗: ' + ((r && r.message) || '未知錯誤'));
+            return;
+        }
+
+        const movedCount = (r.moved || []).length;
+        const skippedCount = (r.skipped || []).length;
+        const errs = r.errors || [];
+        let msg = `已移動 ${movedCount} 個檔案到:\n${r.targetDir}`;
+        if (skippedCount > 0) msg += `\n(${skippedCount} 個檔案原本就在目的資料夾, 已略過)`;
+        if (errs.length > 0) msg += `\n\n下列檔案移動失敗:\n` + errs.map(e => `・${e.file}: ${e.message}`).join('\n');
+        alert(msg);
+        setMoveState(null);
+    };
 
     React.useEffect(() => {
         ensureNotesColumn(); // 確保資料庫有 notes 欄位
@@ -1060,6 +1119,31 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                 </div>
             </div>
         `}
+        ${moveState && html`
+            <div className="modal-overlay" onClick=${() => setMoveState(null)}>
+                <div className="modal-box" onClick=${e => e.stopPropagation()} style=${{ maxWidth: '560px', width: '90%' }}>
+                    <div className="modal-header"><h3 style=${{ margin: 0, fontSize: '16px' }}>移動作品檔案</h3></div>
+                    <div style=${{ padding: '8px 0', fontSize: '13px', color: '#666', lineHeight: 1.5 }}>
+                        勾選要移動的影片檔 (將連同旁邊同主檔名的封面圖等一起移動)，接著選擇軟體根目錄範圍內的目的資料夾：
+                    </div>
+                    <div style=${{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', borderRadius: 4 }}>
+                        ${moveState.files.map((f, i) => html`
+                            <label key=${i} style=${{ display: 'flex', gap: '8px', padding: '8px 12px', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', alignItems: 'flex-start' }}>
+                                <input type="checkbox" checked=${f.checked} onChange=${() => setMoveState(prev => ({ ...prev, files: prev.files.map((x, j) => j === i ? { ...x, checked: !x.checked } : x) }))} style=${{ marginTop: 3, flexShrink: 0 }} />
+                                <div style=${{ minWidth: 0 }}>
+                                    <div style=${{ wordBreak: 'break-all' }}>${f.fileName}</div>
+                                    <div style=${{ fontSize: '12px', color: '#888', wordBreak: 'break-all' }}>${f.relativePath}</div>
+                                </div>
+                            </label>
+                        `)}
+                    </div>
+                    <div className="modal-footer" style=${{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button className="btn-secondary" onClick=${() => setMoveState(null)}>取消</button>
+                        <button className="btn-primary" onClick=${handleConfirmMove}><${FolderInput} size=${16} style=${{ marginRight: 6 }} />選擇目的資料夾並移動</button>
+                    </div>
+                </div>
+            </div>
+        `}
         <div className="main-layout">
             <div className="sidebar" style=${{ width: '50%' }}>
                 <div className="editor-gallery ${dragOver ? 'drag-over' : ''}" onDragOver=${e => { e.preventDefault(); setDragOver(true); }} onDragLeave=${() => setDragOver(false)} onDrop=${handleDropUpload}>
@@ -1104,6 +1188,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     <div className="result-info">${isEditMode ? '編輯作品' : '新增作品'}</div>
                     <div style=${{ display: 'flex', gap: '8px' }}>
                         <button className="btn-primary" onClick=${() => findAndPlay(formData.work_number, formData.name)} disabled=${isPlaying} style=${{ backgroundColor: '#28a745', borderColor: '#28a745', opacity: isPlaying ? 0.6 : 1 }}><${Play} size=${16} style=${{ marginRight: 6 }} />${isPlaying ? '搜尋中...' : '播放影片'}</button>
+                        <button className="btn-primary" onClick=${openMoveFiles} disabled=${isMoving} style=${{ backgroundColor: '#6f42c1', borderColor: '#6f42c1', opacity: isMoving ? 0.6 : 1 }}><${FolderInput} size=${16} style=${{ marginRight: 6 }} />${isMoving ? '搜尋中...' : '移動檔案'}</button>
                         <button className="btn-primary" onClick=${handleSave}><${Save} size=${16} style=${{ marginRight: 6 }} /> 儲存</button>
                         <button className="nav-btn" onClick=${attemptCancel}><${X} size=${16} style=${{ marginRight: 4 }} /> 取消</button>
                     </div>
@@ -1223,6 +1308,15 @@ function WorkCard({ work, onClick }) {
                         `)}
                     </div>
                 `}
+                ${work.folderNames !== undefined && (() => {
+        const folders = work.folderNames || [];
+        const label = folders.length > 0 ? folders.join('、') : '找不到檔案';
+        return html`
+                        <div style=${{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', fontSize: '12px', color: folders.length > 0 ? '#666' : '#bbb', minWidth: 0 }} title=${label}>
+                            <${Folder} size=${12} style=${{ flexShrink: 0 }} />
+                            <span style=${{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${label}</span>
+                        </div>`;
+    })()}
             </div>
         </div>`;
 }

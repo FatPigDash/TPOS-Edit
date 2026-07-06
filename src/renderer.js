@@ -6,6 +6,14 @@ const React = require('react');
 const ReactDOM = require('react-dom/client');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
+const { ipcRenderer } = require('electron');
+
+// 依作品識別碼於資料夾對照表中查詢所屬資料夾名稱 (與 main 的比對邏輯一致: 大寫去空白, 並容錯去連字號)
+function lookupWorkFolders(map, workNumber) {
+    if (!map || !workNumber) return [];
+    const t = String(workNumber).toUpperCase().replace(/\s+/g, '');
+    return map[t] || map[t.replace(/-/g, '')] || [];
+}
 const {
     Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog, FolderInput, ArrowLeft
 } = require('lucide-react');
@@ -141,7 +149,7 @@ function App() {
     const loadWorks = () => {
         if (!db) return;
         setIsLoading(true);
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
                 let whereClauses = [];
                 const params = [];
@@ -264,9 +272,17 @@ function App() {
                     } catch (e) { console.error(e); }
                 }
 
+                // 掃描根目錄一次, 取得各作品實體檔案所屬的資料夾名稱 (main 端有 TTL 快取)
+                let folderMap = {};
+                try {
+                    const fr = await ipcRenderer.invoke('get-work-folders');
+                    folderMap = (fr && fr.map) || {};
+                } catch (e) { console.error(e); }
+
                 rows.forEach(row => {
                     row.tags = tagsByWork[row.id] || [];
                     row.firstGroupOrder = globalFirstGroupOrder;
+                    row.folderNames = lookupWorkFolders(folderMap, row.work_number);
                 });
 
                 setWorks(rows);
