@@ -1,6 +1,6 @@
 {
   "name": "tpos-app",
-  "version": "7.9.1",
+  "version": "7.11.0",
   "description": "The Pile of Shame Application",
   "main": "src/main.js",
   "scripts": {
@@ -34,7 +34,7 @@
   },
   "build": {
     "appId": "com.tpos.app",
-    "productName": "TPOS V7.9.1",
+    "productName": "TPOS V7.11.0",
     "directories": {
       "output": "dist"
     },

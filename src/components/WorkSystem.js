@@ -402,10 +402,11 @@ function TagSelector({ selectedTags, onChange }) {
 
     return html`
         <div className="tag-selector-container">
+            <div className="tag-rows">
             ${groups.map(group => html`
-                <div className="tag-selector-group" key=${group.id}>
-                    <div className="group-title">${group.name}</div>
-                    <div className="tag-chips">
+                <div className="tag-row" key=${group.id}>
+                    <div className="tag-row-name" style=${group.color ? { backgroundColor: group.color, color: getContrastYIQ(group.color) } : {}}>${group.name}</div>
+                    <div className="tag-row-tags">
                         ${group.tags.map(tag => {
         const isSelected = selectedTags.some(t => t.id === tag.id);
         const style = tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {};
@@ -420,6 +421,7 @@ function TagSelector({ selectedTags, onChange }) {
                     </div>
                 </div>
             `)}
+            </div>
         </div>`;
 }
 
@@ -678,21 +680,25 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                     <div className="filter-group">
                         <label className="filter-label">標籤</label>
                         <div style=${{ padding: '8px 0' }}>
-                            ${groups.map(group => html`
-                                <div style=${{ marginBottom: 8, display: 'flex', alignItems: 'center' }}>
-                                    <span style=${{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', marginRight: 8, fontSize: '12px', fontWeight: 'bold', backgroundColor: group.color || '#eee', color: group.color ? getContrastYIQ(group.color) : '#333' }}>${group.name}</span>
-                                    <div style=${{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                        ${group.tags.map(tag => html`<span 
-                                            className="tag-chip" 
-                                            style=${tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {}}
-                                            onMouseDown=${(e) => handleMiddleClickTag(e, tag.id)}
-                                            title="中鍵點擊加入篩選">
-                                            ${tag.name}
-                                        </span>`)}
+                            ${groups.length === 0
+                ? html`<span style=${{ color: '#999' }}>無標籤</span>`
+                : html`<div className="tag-rows">
+                                ${groups.map(group => html`
+                                    <div className="tag-row" key=${group.name}>
+                                        <div className="tag-row-name" style=${group.color ? { backgroundColor: group.color, color: getContrastYIQ(group.color) } : {}}>${group.name}</div>
+                                        <div className="tag-row-tags">
+                                            ${group.tags.map(tag => html`<span
+                                                className="tag-chip"
+                                                key=${tag.id}
+                                                style=${tag.color ? { backgroundColor: tag.color, color: getContrastYIQ(tag.color), borderColor: tag.color } : {}}
+                                                onMouseDown=${(e) => handleMiddleClickTag(e, tag.id)}
+                                                title="中鍵點擊加入篩選">
+                                                ${tag.name}
+                                            </span>`)}
+                                        </div>
                                     </div>
-                                </div>
-                            `)}
-                            ${groups.length == 0 && html`<span style=${{ color: '#999' }}>無標籤</span>`}
+                                `)}
+                            </div>`}
                         </div>
                     </div>
 

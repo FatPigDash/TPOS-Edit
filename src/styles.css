@@ -733,28 +733,53 @@ body {
     border-radius: 4px;
 }
 
-.tag-selector-group {
-    margin-bottom: 12px;
+/* 標籤「整列」呈現 — 供作品詳細頁 / 編輯頁使用, 與標籤系統一致的欄位式外觀
+   (左: 上色的群組名稱格; 右: 標籤膠囊, 水平排列可換行) */
+.tag-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.group-title {
+.tag-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: #fff;
+}
+
+.tag-row-name {
+    flex: 0 0 170px;
+    width: 170px;
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
     font-weight: bold;
-    font-size: 14px;
-    color: #666;
-    margin-bottom: 4px;
+    font-size: 19.5px;
+    border-right: 1px solid rgba(0, 0, 0, 0.08);
+    background-color: var(--group-bg);
+    word-break: break-word;
 }
 
-.tag-chips {
+.tag-row-tags {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-wrap: wrap;
+    align-content: center;
+    align-items: center;
     gap: 6px;
+    padding: 8px 10px;
 }
 
 .tag-chip {
-    padding: 4px 10px;
+    padding: 6px 14px;
     border: 1px solid #ddd;
-    border-radius: 16px;
-    font-size: 13px;
+    border-radius: 18px;
+    font-size: 19.5px;
     cursor: pointer;
     background-color: #fff;
     display: inline-flex;
