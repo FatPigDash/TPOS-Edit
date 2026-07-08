@@ -75,6 +75,8 @@ function initDB() {
         addActorColumnIfMissing('name_reading', "ALTER TABLE actors ADD COLUMN name_reading TEXT");
         addActorColumnIfMissing('tags', "ALTER TABLE actors ADD COLUMN tags TEXT");
         addActorColumnIfMissing('scrape_failed', "ALTER TABLE actors ADD COLUMN scrape_failed INTEGER DEFAULT 0");
+        // V1.8.0: source_url (自動抓取來源網址, 使用者可編輯)
+        addActorColumnIfMissing('source_url', "ALTER TABLE actors ADD COLUMN source_url TEXT");
         // 自訂別名 custom_aliases: 合併來源名 / 使用者手動輸入; 抓取流程不會覆蓋此欄位
         const hadCustomAliases = actorCols.includes('custom_aliases');
         addActorColumnIfMissing('custom_aliases', "ALTER TABLE actors ADD COLUMN custom_aliases TEXT");
@@ -139,7 +141,8 @@ function initDB() {
                 name_reading TEXT,
                 tags TEXT,
                 scrape_failed INTEGER DEFAULT 0,
-                custom_aliases TEXT
+                custom_aliases TEXT,
+                source_url TEXT
             );
             CREATE TABLE IF NOT EXISTS work_actor_link (
                 work_id INTEGER,

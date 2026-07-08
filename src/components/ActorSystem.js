@@ -3,7 +3,7 @@ const htm = require('htm');
 const html = htm.bind(React.createElement);
 const path = require('path');
 const fs = require('fs');
-const { webUtils } = require('electron');
+const { webUtils, shell } = require('electron');
 const {
     MoreVertical, Edit, Trash2, Users, AlertTriangle, Star,
     Upload, Plus, Search, X, GitMerge, ArrowRight, Zap, RefreshCw, ArrowLeft,
@@ -43,11 +43,14 @@ async function applyScrapedData(actor, d) {
         // タグ: 直接以抓取結果覆蓋 (去重)
         const tagsStr = [...new Set((d.tags || []).map(t => (t || '').trim()).filter(s => s))].join(',');
 
+        // 來源網址: 有抓到才覆蓋, 否則保留原值 (使用者可於編輯視窗手動修改此欄位)
+        const sourceUrl = d.source_url || actor.source_url || null;
+
         // 名稱: 移除括號內的別名 (別名已存於別名欄位); 若清理後為空則保留原名
         const cleanedName = cleanSearchName(actor.name) || actor.name;
 
-        db.prepare('UPDATE actors SET name = ?, aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ?, scrape_failed = 0 WHERE id = ?')
-            .run(cleanedName, aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, actor.id);
+        db.prepare('UPDATE actors SET name = ?, aliases = ?, birthdate = ?, sizes = ?, av_period = ?, name_reading = ?, tags = ?, scrape_failed = 0, source_url = ? WHERE id = ?')
+            .run(cleanedName, aliasesStr, birthdate, sizes, avPeriod, nameReading, tagsStr, sourceUrl, actor.id);
 
         // 圖片: 僅在原本沒有圖片時才下載
         let imageUpdated = false;
@@ -67,12 +70,24 @@ async function applyScrapedData(actor, d) {
     }
 }
 
+// 若演員已有來源網址, 優先直接抓取該網址 (較快且避免同名/改名造成搜尋結果跑掉);
+// 網址失效 (例如頁面下架) 時退回用姓名搜尋。回傳格式與 scrapeActorByName 相同。
+async function scrapeActorAuto(actor) {
+    if (actor.source_url) {
+        try {
+            const r = await scrapeActressUrl(actor.source_url);
+            return { success: true, data: r.data, sourceUrl: r.sourceUrl };
+        } catch (e) { /* 網址失效, 退回姓名搜尋 */ }
+    }
+    return scrapeActorByName(actor.name);
+}
+
 // 自動抓取並寫入 (供批量抓取與失敗清單重新掃描使用; 多筆結果時自動比對/略過, 不互動)
 // 回傳 { status: 'updated' | 'notfound' | 'error', message?, imageUpdated? }
 async function scrapeAndUpdateActor(actor) {
     let res;
     try {
-        res = await scrapeActorByName(actor.name);
+        res = await scrapeActorAuto(actor);
     } catch (e) {
         try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e2) { }
         return { status: 'error', message: e.message };
@@ -81,6 +96,7 @@ async function scrapeAndUpdateActor(actor) {
         try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e) { }
         return { status: 'notfound', message: res.message };
     }
+    res.data.source_url = res.sourceUrl;
     const result = await applyScrapedData(actor, res.data);
     if (result.status !== 'updated') {
         try { db.prepare('UPDATE actors SET scrape_failed = 1 WHERE id = ?').run(actor.id); } catch (e) { }
@@ -162,6 +178,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
     const [sizes, setSizes] = React.useState("");
     const [avPeriod, setAvPeriod] = React.useState("");
     const [tags, setTags] = React.useState("");
+    const [sourceUrl, setSourceUrl] = React.useState("");
     const [actorNumber, setActorNumber] = React.useState("");
     const [image, setImage] = React.useState(null);
     const [originalImage, setOriginalImage] = React.useState(null);
@@ -192,6 +209,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setSizes(actor.sizes || "");
                 setAvPeriod(actor.av_period || "");
                 setTags(actor.tags || "");
+                setSourceUrl(actor.source_url || "");
                 setActorNumber(actor.actor_number);
                 let imgState = null;
                 if (actor.image_path) {
@@ -201,7 +219,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 setImage(imgState);
                 setOriginalImage(actor.image_path);
                 setIsFavorite(actor.is_favorite || 0);
-                setInitialState({ name: actor.name, customAliases: cleanAliases(splitAliases(actor.custom_aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", tags: actor.tags || "", image: imgState, isFavorite: actor.is_favorite || 0 });
+                setInitialState({ name: actor.name, customAliases: cleanAliases(splitAliases(actor.custom_aliases)).join(','), birthdate: actor.birthdate || "", sizes: actor.sizes || "", avPeriod: actor.av_period || "", tags: actor.tags || "", sourceUrl: actor.source_url || "", image: imgState, isFavorite: actor.is_favorite || 0 });
             }
         } else {
             const num = getNewActorNumber(db);
@@ -210,7 +228,8 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
             setAutoAliases("");
             setAliasItems([""]);
             setTags("");
-            setInitialState({ name: '', customAliases: '', birthdate: '', sizes: '', avPeriod: '', tags: '', image: null, isFavorite: 0 });
+            setSourceUrl("");
+            setInitialState({ name: '', customAliases: '', birthdate: '', sizes: '', avPeriod: '', tags: '', sourceUrl: '', image: null, isFavorite: 0 });
         }
     }, [actorId]);
 
@@ -228,7 +247,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     const isDirty = () => {
         if (!initialState) return false;
-        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.customAliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || tags !== initialState.tags || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
+        return name !== initialState.name || cleanAliases(aliasItems).join(',') !== initialState.customAliases || birthdate !== initialState.birthdate || sizes !== initialState.sizes || avPeriod !== initialState.avPeriod || tags !== initialState.tags || sourceUrl !== initialState.sourceUrl || isFavorite !== initialState.isFavorite || JSON.stringify(image) !== JSON.stringify(initialState.image);
     };
 
     const attemptClose = () => { if (isDirty()) setShowDirtyWarning(true); else onClose(); };
@@ -275,11 +294,12 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                     const sz = sizes.trim() || null;
                     const avp = avPeriod.trim() || null;
                     const tg = tags.trim() || null;
+                    const su = sourceUrl.trim() || null;
                     if (isEdit) {
                         // 注意: 不更新 aliases (自動別名由抓取管理, 表單唯讀), 僅寫入 custom_aliases
-                        db.prepare('UPDATE actors SET name = ?, custom_aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ?, tags = ? WHERE id = ?').run(finalName, mergedCustom, isFavorite, bd, sz, avp, tg, actorId);
+                        db.prepare('UPDATE actors SET name = ?, custom_aliases = ?, is_favorite = ?, birthdate = ?, sizes = ?, av_period = ?, tags = ?, source_url = ? WHERE id = ?').run(finalName, mergedCustom, isFavorite, bd, sz, avp, tg, su, actorId);
                     } else {
-                        const info = db.prepare('INSERT INTO actors (actor_number, name, custom_aliases, created_at, is_favorite, birthdate, sizes, av_period, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedCustom, Date.now(), isFavorite, bd, sz, avp, tg);
+                        const info = db.prepare('INSERT INTO actors (actor_number, name, custom_aliases, created_at, is_favorite, birthdate, sizes, av_period, tags, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(actorNumber, finalName, mergedCustom, Date.now(), isFavorite, bd, sz, avp, tg, su);
                         currentId = info.lastInsertRowid;
                     }
 
@@ -357,6 +377,10 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 <div className="filter-group">
                     <label className="filter-label">タグ <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(以逗號區隔)</span></label>
                     <input className="filter-input" value=${tags} onInput=${e => setTags(e.target.value)} placeholder="例如: 巨乳, 美乳, 芸能人" />
+                </div>
+                <div className="filter-group">
+                    <label className="filter-label">來源網址 <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>(自動抓取・可手動編輯)</span></label>
+                    <input className="filter-input" value=${sourceUrl} onInput=${e => setSourceUrl(e.target.value)} placeholder="例如: https://www.minnano-av.com/actress12345.html" />
                 </div>
                 <div className="filter-group">
                     <label className="filter-label">關注演員</label>
@@ -573,17 +597,27 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         } catch (e) { console.error(e); }
     };
 
-    // 抓取此演員資訊 (minnano-av); 多筆候選時讓使用者選擇
+    // 抓取此演員資訊 (minnano-av); 若已有來源網址則優先直接抓取該網址, 失效才退回姓名搜尋; 多筆候選時讓使用者選擇
     const handleScrapeThis = async () => {
         if (!actor || scraping) return;
         setScraping(true);
         try {
+            if (actor.source_url) {
+                try {
+                    const r = await scrapeActressUrl(actor.source_url);
+                    r.data.source_url = r.sourceUrl;
+                    const applied = await applyScrapedData(actor, r.data);
+                    if (applied.status === 'updated') { reloadActor(); return; }
+                } catch (e) { /* 來源網址已失效, 退回姓名搜尋 */ }
+            }
             const res = await lookupActress(actor.name);
             if (res.type === 'none') {
                 alert('在 minnano-av 找不到此演員的資料。');
                 markScrapeFailed(true);
             } else if (res.type === 'single') {
-                const r = await applyScrapedData(actor, parseProfile(res.body));
+                const data = parseProfile(res.body);
+                data.source_url = res.url;
+                const r = await applyScrapedData(actor, data);
                 if (r.status === 'updated') reloadActor();
                 else { alert('抓取失敗: ' + (r.message || '未知錯誤')); markScrapeFailed(true); }
             } else if (res.type === 'multiple') {
@@ -592,8 +626,9 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         } catch (e) {
             alert('抓取失敗: ' + e.message);
             markScrapeFailed(true);
+        } finally {
+            setScraping(false);
         }
-        setScraping(false);
     };
 
     // 候選太多時, 用別名等關鍵字重新搜尋網站
@@ -604,7 +639,9 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         if (res.type === 'none') {
             alert('找不到「' + kw + '」的資料。');
         } else if (res.type === 'single') {
-            const r = await applyScrapedData(actor, parseProfile(res.body));
+            const data = parseProfile(res.body);
+            data.source_url = res.url;
+            const r = await applyScrapedData(actor, data);
             setCandidates(null);
             if (r.status === 'updated') reloadActor();
             else { alert('抓取失敗: ' + (r.message || '未知錯誤')); markScrapeFailed(true); }
@@ -620,6 +657,7 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
         setScraping(true);
         try {
             const r = await scrapeActressUrl(c.url);
+            r.data.source_url = r.sourceUrl;
             const applied = await applyScrapedData(actor, r.data);
             if (applied.status === 'updated') reloadActor();
             else { alert('抓取失敗: ' + (applied.message || '未知錯誤')); markScrapeFailed(true); }
@@ -766,6 +804,14 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
                                         ? html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                                             ${tagList.map((t, i) => html`<span key=${i} style=${{ fontSize: '13px', padding: '2px 10px', borderRadius: '12px', backgroundColor: '#eef2f7', color: '#445' }}>${t}</span>`)}
                                         </div>`
+                                        : html`<span style=${emptyStyle}>—</span>`}
+                                </div>
+                            </div>
+                            <div style=${rowStyle}>
+                                <span style=${labelStyle}>來源網址</span>
+                                <div style=${{ flex: 1, wordBreak: 'break-all' }}>
+                                    ${actor.source_url
+                                        ? html`<a href="#" onClick=${(e) => { e.preventDefault(); shell.openExternal(actor.source_url); }} style=${{ color: '#2196F3' }} title="在瀏覽器中開啟">${actor.source_url}</a>`
                                         : html`<span style=${emptyStyle}>—</span>`}
                                 </div>
                             </div>
@@ -1064,23 +1110,43 @@ function ActorSystem({
         }
     };
 
-    // 批量抓取所有演員資訊 (minnano-av)
-    const handleBatchScrape = async ({ onlyMissing = false, skipFailed = false } = {}) => {
+    // 批量抓取演員資訊 (minnano-av)
+    // mode: 'all' 所有演員 / 'missing' 僅尚未有資訊的演員(全部) / 'missing_skip_failed' 僅尚未有資訊的演員(跳過失敗項目) / 'has_info' 僅已有資訊的演員(更新既有資料)
+    const BATCH_SCRAPE_MODES = {
+        all: {
+            label: '所有演員',
+            clause: '',
+            emptyMessage: '沒有可抓取的演員。'
+        },
+        missing: {
+            label: '「尚未有資訊」的演員 (全部)',
+            // 生年月日/サイズ/AV出演期間/讀音 皆為空, 視為尚未有資訊
+            clause: " AND (birthdate IS NULL OR birthdate = '') AND (sizes IS NULL OR sizes = '') AND (av_period IS NULL OR av_period = '') AND (name_reading IS NULL OR name_reading = '')",
+            emptyMessage: '目前沒有「尚未有資訊」的演員需要抓取。'
+        },
+        missing_skip_failed: {
+            label: '「尚未有資訊」的演員 (跳過先前抓取失敗項目)',
+            clause: " AND (birthdate IS NULL OR birthdate = '') AND (sizes IS NULL OR sizes = '') AND (av_period IS NULL OR av_period = '') AND (name_reading IS NULL OR name_reading = '') AND (scrape_failed IS NULL OR scrape_failed = 0)",
+            emptyMessage: '目前沒有「尚未有資訊」且尚未抓取失敗的演員需要抓取。'
+        },
+        has_info: {
+            label: '「已有資訊」的演員 (更新既有資料)',
+            // 至少一項已有資料, 視為已有資訊
+            clause: " AND (COALESCE(birthdate,'') != '' OR COALESCE(sizes,'') != '' OR COALESCE(av_period,'') != '' OR COALESCE(name_reading,'') != '')",
+            emptyMessage: '目前沒有「已有資訊」的演員可供更新。'
+        }
+    };
+
+    const handleBatchScrape = async (mode = 'all') => {
         if (!db || scrapeProgress) return;
-        const scopeText = (onlyMissing ? '尚未有資訊的演員' : '所有演員') + (skipFailed ? ' (略過先前抓取失敗者)' : '');
-        if (!confirm('將連線到 minnano-av.com 逐一抓取' + scopeText + '的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間/タグ 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
+        const config = BATCH_SCRAPE_MODES[mode] || BATCH_SCRAPE_MODES.all;
+        if (!confirm('將連線到 minnano-av.com 逐一抓取' + config.label + '的資訊。\n\n• 已有圖片的演員不會更換圖片\n• 別名/生年月日/サイズ/AV出演期間/タグ 會自動更新\n• 為避免被網站封鎖, 每位演員之間會稍作延遲, 整體可能需要較長時間\n\n確定要開始嗎?')) return;
 
         let rows;
         try {
-            // 「尚未有資訊」: 生年月日/サイズ/AV出演期間/讀音 皆為空的演員
-            const missingClause = onlyMissing
-                ? " AND (birthdate IS NULL OR birthdate = '') AND (sizes IS NULL OR sizes = '') AND (av_period IS NULL OR av_period = '') AND (name_reading IS NULL OR name_reading = '')"
-                : '';
-            // 「跳過抓取失敗」: 排除先前已標記 scrape_failed = 1 的演員
-            const failedClause = skipFailed ? " AND (scrape_failed IS NULL OR scrape_failed = 0)" : '';
-            rows = db.prepare("SELECT * FROM actors WHERE is_deleted = 0" + missingClause + failedClause + " ORDER BY actor_number ASC").all();
+            rows = db.prepare("SELECT * FROM actors WHERE is_deleted = 0" + config.clause + " ORDER BY actor_number ASC").all();
         } catch (e) { alert('讀取演員清單失敗: ' + e.message); return; }
-        if (!rows.length) { alert(onlyMissing ? '沒有「尚未有資訊」的演員需要抓取。' : (skipFailed ? '沒有需要抓取的演員 (已排除抓取失敗者)。' : '沒有可抓取的演員。')); return; }
+        if (!rows.length) { alert(config.emptyMessage); return; }
 
         scrapeCancelRef.current = false;
         let ok = 0, fail = 0;
@@ -1195,18 +1261,22 @@ function ActorSystem({
                                 <${Globe} size=${16} style=${{ marginRight: 4 }} /> 抓取資訊
                             </button>
                             ${showScrapeMenu && html`
-                                <div style=${{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', boxShadow: '0 2px 10px rgba(0,0,0,0.12)', zIndex: 30, minWidth: '240px', overflow: 'hidden' }}>
+                                <div style=${{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', backgroundColor: '#fff', border: '1px solid #eee', borderRadius: '6px', boxShadow: '0 2px 10px rgba(0,0,0,0.12)', zIndex: 30, minWidth: '260px', overflow: 'hidden' }}>
                                     <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
-                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ onlyMissing: false }); }}>
-                                        批量抓取 (所有演員)
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('all'); }}>
+                                        抓取所有演員
                                     </div>
                                     <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
-                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ onlyMissing: true }); }}>
-                                        只抓尚未有資訊的演員
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('missing'); }}>
+                                        只抓「尚未有資訊」的演員 (全部)
+                                    </div>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('missing_skip_failed'); }}>
+                                        只抓「尚未有資訊」的演員 (跳過先前失敗)
                                     </div>
                                     <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
-                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape({ skipFailed: true }); }}>
-                                        批量抓取 (跳過失敗項目)
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('has_info'); }}>
+                                        只抓「已有資訊」的演員 (更新既有資料)
                                     </div>
                                 </div>
                             `}
