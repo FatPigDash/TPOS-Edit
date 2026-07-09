@@ -1111,7 +1111,7 @@ function ActorSystem({
     };
 
     // 批量抓取演員資訊 (minnano-av)
-    // mode: 'all' 所有演員 / 'missing' 僅尚未有資訊的演員(全部) / 'missing_skip_failed' 僅尚未有資訊的演員(跳過失敗項目) / 'has_info' 僅已有資訊的演員(更新既有資料)
+    // mode: 'all' 所有演員 / 'missing' 僅尚未有資訊的演員(全部) / 'missing_skip_failed' 僅尚未有資訊的演員(跳過失敗項目) / 'has_info' 僅已有資訊的演員(更新既有資料) / 'failed_only' 僅先前抓取失敗的演員(重新嘗試)
     const BATCH_SCRAPE_MODES = {
         all: {
             label: '所有演員',
@@ -1134,6 +1134,11 @@ function ActorSystem({
             // 至少一項已有資料, 視為已有資訊
             clause: " AND (COALESCE(birthdate,'') != '' OR COALESCE(sizes,'') != '' OR COALESCE(av_period,'') != '' OR COALESCE(name_reading,'') != '')",
             emptyMessage: '目前沒有「已有資訊」的演員可供更新。'
+        },
+        failed_only: {
+            label: '先前抓取失敗的演員 (重新嘗試)',
+            clause: " AND scrape_failed = 1",
+            emptyMessage: '目前沒有標記為「抓取失敗」的演員。'
         }
     };
 
@@ -1274,9 +1279,13 @@ function ActorSystem({
                                         onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('missing_skip_failed'); }}>
                                         只抓「尚未有資訊」的演員 (跳過先前失敗)
                                     </div>
-                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee' }}
                                         onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('has_info'); }}>
                                         只抓「已有資訊」的演員 (更新既有資料)
+                                    </div>
+                                    <div className="menu-item" style=${{ padding: '10px 14px', cursor: 'pointer', fontSize: '14px', color: '#333' }}
+                                        onClick=${() => { setShowScrapeMenu(false); handleBatchScrape('failed_only'); }}>
+                                        只抓「抓取失敗」的演員 (重新嘗試)
                                     </div>
                                 </div>
                             `}
