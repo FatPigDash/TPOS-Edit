@@ -84,8 +84,13 @@ function TagSystem({ canGoBack, onGoBack }) {
         if (!db) return;
         try {
             const g = db.prepare('SELECT * FROM tag_groups ORDER BY sort_order ASC').all();
-            const t = db.prepare('SELECT * FROM tags WHERE is_visible = 1 ORDER BY sort_order ASC').all();
+            const t = db.prepare(`
+                SELECT tags.*, (SELECT COUNT(*) FROM work_tag_link wtl WHERE wtl.tag_id = tags.id) as usage_count
+                FROM tags WHERE is_visible = 1 ORDER BY sort_order ASC
+            `).all();
             setGroups(g.map(grp => ({ ...grp, tags: t.filter(tag => tag.group_id === grp.id) })));
+            // 通知其他常駐元件 (如作品篩選側欄) 標籤資料已變更，需重新載入
+            window.dispatchEvent(new Event('tags-changed'));
         } catch (err) { console.error(err); }
     };
 
@@ -413,7 +418,7 @@ function TagSystem({ canGoBack, onGoBack }) {
                                     onDragStart=${e => handleDragStart(e, 'tag', tag)} onDragEnd=${handleDragEnd}>
                                     ${isTagEditing ?
                         html`<input ref=${editInputRef} ...${inputProps} value=${editValue} onInput=${e => setEditValue(e.target.value)} onBlur=${submitEdit} onKeyDown=${e => e.key === 'Enter' && submitEdit()} />` :
-                        html`<span onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name}</span>`
+                        html`<span onClick=${() => startEditing('tag', tag.id, tag.name)}>${tag.name} (${tag.usage_count || 0})</span>`
                     }
                                     <div style=${{ display: 'flex', alignItems: 'center' }}>
                                         <button className="tag-menu-btn ${isMenuOpen ? 'active' : ''}" style=${tagMenuBtnStyle} onClick=${e => handleOpenTagMenu(tag, e)}><${MoreVertical} size=${14} /></button>

@@ -40,14 +40,24 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
     const [groups, setGroups] = React.useState([]);
     const [expandedGroups, setExpandedGroups] = React.useState({});
 
-    React.useEffect(() => {
+    const loadTags = React.useCallback(() => {
         if (!db) return;
         try {
             const g = db.prepare('SELECT * FROM tag_groups ORDER BY sort_order ASC').all();
-            const t = db.prepare('SELECT * FROM tags WHERE is_visible = 1 ORDER BY sort_order ASC').all();
+            const t = db.prepare(`
+                SELECT tags.*, (SELECT COUNT(*) FROM work_tag_link wtl WHERE wtl.tag_id = tags.id) as usage_count
+                FROM tags WHERE is_visible = 1 ORDER BY sort_order ASC
+            `).all();
             setGroups(g.map(grp => ({ ...grp, tags: t.filter(tag => tag.group_id === grp.id) })));
         } catch (e) { console.error(e); }
     }, []);
+
+    React.useEffect(() => {
+        loadTags();
+        // 分頁切換僅以 CSS 顯示/隱藏, 元件不會卸載, 故需監聽標籤系統的變更事件才能即時同步
+        window.addEventListener('tags-changed', loadTags);
+        return () => window.removeEventListener('tags-changed', loadTags);
+    }, [loadTags]);
 
     const toggleGroup = (groupId) => { setExpandedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] })); };
 
@@ -114,7 +124,7 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
             return html`
                                 <label key=${tag.id} style=${{ display: 'flex', alignItems: 'center', padding: '4px 0', cursor: 'pointer', fontSize: '13px' }} onClick=${(e) => { e.preventDefault(); toggleTag(tag.id); }}>
                                     <${TriStateCheckbox} tagId=${tag.id} />
-                                    <span style=${textStyle}>${tag.name}</span>
+                                    <span style=${textStyle}>${tag.name} (${tag.usage_count || 0})</span>
                                 </label>`;
         })}
                             ${group.tags.length === 0 && html`<div style=${{ fontSize: '12px', color: '#ccc', padding: '4px 0' }}>無標籤</div>`}
