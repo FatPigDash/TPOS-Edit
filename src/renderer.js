@@ -15,7 +15,7 @@ function lookupWorkFolders(map, workNumber) {
     return map[t] || map[t.replace(/-/g, '')] || [];
 }
 const {
-    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog, FolderInput, ArrowLeft
+    Database, Tag, Users, Plus, PanelLeft, ArrowUpDown, FileText, FolderCog, FolderInput, ArrowLeft, X
 } = require('lucide-react');
 
 const { fullTitle } = require('./version');
@@ -365,34 +365,41 @@ function App() {
         isRestoringRef.current = false;
     }, [restoreVersion]);
 
+    const handleRemoveTagFilter = (tagId) => {
+        pushHistory();
+        setUiFilters(prev => ({ ...prev, tags: (prev.tags || []).filter(t => t.id !== tagId) }));
+        setAppliedFilters(prev => ({ ...prev, tags: (prev.tags || []).filter(t => t.id !== tagId) }));
+    };
+
     const getSearchConditions = () => {
         const conds = [];
-        if (appliedFilters.name) conds.push(`名稱: ${appliedFilters.name}`);
-        if (appliedFilters.code) conds.push(`識別碼: ${appliedFilters.code}`);
-        if (appliedFilters.rating) conds.push(`評分 ${appliedFilters.ratingMode === 'eq' ? '=' : '>='} ${appliedFilters.rating}`);
-        if (appliedFilters.director) conds.push(`導演: ${appliedFilters.director}`);
-        if (appliedFilters.maker) conds.push(`製作商: ${appliedFilters.maker}`);
-        if (appliedFilters.publisher) conds.push(`發行商: ${appliedFilters.publisher}`);
-        if (appliedFilters.hasFavActor) conds.push(`包含關注演員`);
-        if (appliedFilters.isWatchLater) conds.push(`待看關注`);
+        if (appliedFilters.name) conds.push({ key: 'name', label: `名稱: ${appliedFilters.name}` });
+        if (appliedFilters.code) conds.push({ key: 'code', label: `識別碼: ${appliedFilters.code}` });
+        if (appliedFilters.rating) conds.push({ key: 'rating', label: `評分 ${appliedFilters.ratingMode === 'eq' ? '=' : '>='} ${appliedFilters.rating}` });
+        if (appliedFilters.director) conds.push({ key: 'director', label: `導演: ${appliedFilters.director}` });
+        if (appliedFilters.maker) conds.push({ key: 'maker', label: `製作商: ${appliedFilters.maker}` });
+        if (appliedFilters.publisher) conds.push({ key: 'publisher', label: `發行商: ${appliedFilters.publisher}` });
+        if (appliedFilters.hasFavActor) conds.push({ key: 'hasFavActor', label: `包含關注演員` });
+        if (appliedFilters.isWatchLater) conds.push({ key: 'isWatchLater', label: `待看關注` });
         const af = appliedFilters.actor;
         if (af?.items?.length > 0) {
             const names = af.items.map(i => i.name).join(af.mode === 'AND' ? ' + ' : ' | ');
-            conds.push(`演員: ${names}`);
+            conds.push({ key: 'actor', label: `演員: ${names}` });
         } else if (af?.inputValue && af.inputValue.trim()) {
-            conds.push(`演員包含: ${af.inputValue.trim()}`);
+            conds.push({ key: 'actorInput', label: `演員包含: ${af.inputValue.trim()}` });
         }
         if (appliedFilters.tags?.length > 0 && db) {
             try {
-                const includeTags = appliedFilters.tags.filter(t => t.mode === 'include');
-                const excludeTags = appliedFilters.tags.filter(t => t.mode === 'exclude');
                 const allIds = appliedFilters.tags.map(t => t.id);
                 const nameRows = db.prepare(`SELECT id, name FROM tags WHERE id IN (${allIds.map(() => '?').join(',')})`).all(...allIds);
                 const nameMap = {};
                 nameRows.forEach(r => { nameMap[r.id] = r.name; });
-                if (includeTags.length > 0) conds.push(`包含標籤: ${includeTags.map(t => nameMap[t.id] || t.id).join(' + ')}`);
-                if (excludeTags.length > 0) conds.push(`排除標籤: ${excludeTags.map(t => nameMap[t.id] || t.id).join(' + ')}`);
-            } catch (e) { conds.push(`標籤: ${appliedFilters.tags.length}個`); }
+                appliedFilters.tags.forEach(t => {
+                    const isExclude = t.mode === 'exclude';
+                    const prefix = isExclude ? '排除標籤' : '包含標籤';
+                    conds.push({ key: `tag-${t.id}`, label: `${prefix}: ${nameMap[t.id] || t.id}`, exclude: isExclude, onRemove: () => handleRemoveTagFilter(t.id) });
+                });
+            } catch (e) { conds.push({ key: 'tagsError', label: `標籤: ${appliedFilters.tags.length}個` }); }
         }
         return conds;
     };
@@ -474,7 +481,14 @@ function App() {
                                             搜尋結果: 共${totalItems} 筆
                                         </div>
                                         <div style=${{ fontSize: '14px', color: '#666', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                            ${getSearchConditions().length === 0 ? html`<div style=${{ color: '#999', fontStyle: 'italic' }}>尚未搜尋</div>` : getSearchConditions().map(cond => html`<div key=${cond} style=${{ display: 'inline-block', backgroundColor: '#e3f2fd', color: '#0d47a1', padding: '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: '1px solid #bbdefb' }}>${cond}</div>`)}
+                                            ${getSearchConditions().length === 0 ? html`<div style=${{ color: '#999', fontStyle: 'italic' }}>尚未搜尋</div>` : html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                ${getSearchConditions().map(cond => html`<div key=${cond.key} style=${{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: cond.exclude ? '#ffebee' : '#e3f2fd', color: cond.exclude ? '#c62828' : '#0d47a1', padding: cond.onRemove ? '6px 6px 6px 10px' : '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: cond.exclude ? '1px solid #ffcdd2' : '1px solid #bbdefb' }}>
+                                                    <span>${cond.label}</span>
+                                                    ${cond.onRemove && html`<button className="btn-ghost" onClick=${cond.onRemove} title="移除此搜尋條件" style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2px', color: cond.exclude ? '#c62828' : '#0d47a1', borderRadius: '4px' }}>
+                                                        <${X} size=${14} />
+                                                    </button>`}
+                                                </div>`)}
+                                            </div>`}
                                         </div>
                                     </div>
                                 </div>

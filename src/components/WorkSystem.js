@@ -220,7 +220,7 @@ function WorkSidebar({ uiFilters, setUiFilters, onApply, onClear }) {
 
     return html`
         <div className="sidebar" style=${{ display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
-            <div style=${{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'white', borderBottom: '1px solid #e0e0e0', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <div style=${{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#f5f5f5', borderBottom: '1px solid #ddd', boxShadow: '0 2px 5px rgba(0,0,0,0.12)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                 <h3 style=${{ margin: 0, flex: 1, fontSize: '15px' }}>作品篩選</h3>
                 <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${onApply}>套用篩選</button>
                 <button className="btn-block" style=${{ padding: '4px 10px', fontSize: '12px' }} onClick=${onClear}>清除篩選</button>
