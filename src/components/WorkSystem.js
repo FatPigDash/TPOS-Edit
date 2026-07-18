@@ -1,4 +1,5 @@
 const React = require('react');
+const ReactDOM = require('react-dom');
 const htm = require('htm');
 const html = htm.bind(React.createElement);
 const path = require('path');
@@ -61,14 +62,17 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
 
     const toggleGroup = (groupId) => { setExpandedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] })); };
 
-    // 三態切換: 未選 -> 包含(include) -> 排除(exclude) -> 未選
+    // 四態切換: 未選 -> 選取(AND) -> 選取(OR) -> 排除 -> 未選
     const toggleTag = (tagId) => {
         const existing = selectedTagIds.find(t => t.id === tagId);
         if (!existing) {
-            // 未選 -> 包含
+            // 未選 -> 選取(AND)
             onChange([...selectedTagIds, { id: tagId, mode: 'include' }]);
         } else if (existing.mode === 'include') {
-            // 包含 -> 排除
+            // 選取(AND) -> 選取(OR)
+            onChange(selectedTagIds.map(t => t.id === tagId ? { id: tagId, mode: 'include_or' } : t));
+        } else if (existing.mode === 'include_or') {
+            // 選取(OR) -> 排除
             onChange(selectedTagIds.map(t => t.id === tagId ? { id: tagId, mode: 'exclude' } : t));
         } else {
             // 排除 -> 未選
@@ -76,32 +80,72 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
         }
     };
 
-    // 自訂三態核取方塊元件
+    const MODE_COLORS = { include: '#2196F3', include_or: '#fb8c00', exclude: '#e53935' };
+
+    // 自訂四態核取方塊元件
     const TriStateCheckbox = ({ tagId }) => {
         const entry = selectedTagIds.find(t => t.id === tagId);
         const mode = entry ? entry.mode : 'none';
+        const color = MODE_COLORS[mode];
 
         const boxStyle = {
             width: '16px', height: '16px', minWidth: '16px',
             border: '2px solid',
-            borderColor: mode === 'include' ? '#2196F3' : (mode === 'exclude' ? '#e53935' : '#bbb'),
+            borderColor: color || '#bbb',
             borderRadius: '3px',
-            backgroundColor: mode === 'include' ? '#2196F3' : (mode === 'exclude' ? '#e53935' : 'white'),
+            backgroundColor: color || 'white',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', marginRight: '6px', flexShrink: 0,
             fontSize: '11px', fontWeight: 'bold', color: 'white', lineHeight: 1,
             userSelect: 'none'
         };
 
-        const symbol = mode === 'include' ? '✓' : (mode === 'exclude' ? '−' : '');
-        return html`<div style=${boxStyle} onClick=${(e) => { e.preventDefault(); toggleTag(tagId); }}>${symbol}</div>`;
+        const symbol = mode === 'exclude' ? '−' : (color ? '✓' : '');
+        const title = mode === 'include' ? '選取 (AND: 需同時包含所有選取標籤)' :
+            mode === 'include_or' ? '選取 (OR: 包含任一選取標籤即可)' :
+                mode === 'exclude' ? '排除 (不可包含此標籤)' : '未選取';
+        return html`<div style=${boxStyle} title=${title} onClick=${(e) => { e.preventDefault(); toggleTag(tagId); }}>${symbol}</div>`;
+    };
+
+    // 標籤篩選邏輯說明: 滑鼠移到 [?] 上方時顯示懸浮視窗
+    // 以 Portal 掛載至 document.body 並用 position: fixed 定位, 避免懸浮視窗影響側邊欄的版面/觸發捲軸
+    const TagFilterHelp = () => {
+        const [show, setShow] = React.useState(false);
+        const btnRef = React.useRef(null);
+        const [pos, setPos] = React.useState({ top: 0, left: 0 });
+
+        const openHelp = () => {
+            if (btnRef.current) {
+                const rect = btnRef.current.getBoundingClientRect();
+                setPos({ top: rect.bottom + 6, left: rect.left });
+            }
+            setShow(true);
+        };
+        const closeHelp = () => setShow(false);
+
+        return html`
+            <div style=${{ position: 'relative', display: 'inline-flex', marginLeft: '6px' }}>
+                <div ref=${btnRef} onMouseEnter=${openHelp} onMouseLeave=${closeHelp}
+                    style=${{ width: '17px', height: '17px', borderRadius: '50%', border: 'none', color: 'white', backgroundColor: '#2196F3', fontSize: '11px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'help', userSelect: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>?</div>
+                ${show && ReactDOM.createPortal(html`
+                    <div onMouseEnter=${openHelp} onMouseLeave=${closeHelp}
+                        style=${{ position: 'fixed', top: `${pos.top}px`, left: `${pos.left}px`, zIndex: 99999, width: '260px', backgroundColor: 'white', border: '1px solid #ddd', borderRadius: '6px', boxShadow: '0 4px 16px rgba(0,0,0,0.3)', padding: '10px 12px', fontSize: '12px', color: '#444', lineHeight: 1.6, fontWeight: 'normal' }}>
+                        <div style=${{ marginBottom: '4px', color: '#666' }}>核取方塊點擊會依序循環4種狀態:</div>
+                        <div style=${{ display: 'flex', alignItems: 'center' }}><span style=${{ width: '12px', height: '12px', backgroundColor: '#2196F3', borderRadius: '3px', marginRight: '6px', flexShrink: 0 }} />選取(AND): 需同時擁有所有此類標籤</div>
+                        <div style=${{ display: 'flex', alignItems: 'center', marginTop: '4px' }}><span style=${{ width: '12px', height: '12px', backgroundColor: '#fb8c00', borderRadius: '3px', marginRight: '6px', flexShrink: 0 }} />選取(OR): 擁有其中任一個即符合</div>
+                        <div style=${{ display: 'flex', alignItems: 'center', marginTop: '4px' }}><span style=${{ width: '12px', height: '12px', backgroundColor: '#e53935', borderRadius: '3px', marginRight: '6px', flexShrink: 0 }} />排除: 不可擁有此標籤</div>
+                        <div style=${{ marginTop: '6px', color: '#888' }}>AND、OR、排除彼此之間以「且」的邏輯合併 (例如同時勾選 AND 與 OR 標籤時, 兩者皆須滿足)</div>
+                    </div>
+                `, document.body)}
+            </div>`;
     };
 
     return html`
         <div className="tag-filter-sidebar" style=${{ borderTop: '1px solid #eee', paddingTop: '16px' }}>
-            <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>標籤篩選</div>
+            <div style=${{ fontWeight: 'bold', marginBottom: '8px', color: '#666', display: 'flex', alignItems: 'center' }}>標籤篩選<${TagFilterHelp} /></div>
             ${groups.map(group => {
         const includeCount = group.tags.filter(t => selectedTagIds.find(s => s.id === t.id && s.mode === 'include')).length;
+        const includeOrCount = group.tags.filter(t => selectedTagIds.find(s => s.id === t.id && s.mode === 'include_or')).length;
         const excludeCount = group.tags.filter(t => selectedTagIds.find(s => s.id === t.id && s.mode === 'exclude')).length;
         const isExpanded = expandedGroups[group.id];
         const groupStyle = group.color ? { borderLeft: `4px solid ${group.color}` } : {};
@@ -112,6 +156,7 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
                         ${isExpanded ? html`<${ChevronDown} size=${14} />` : html`<${ChevronRightIcon} size=${14} />`}
                         <span style=${{ marginLeft: '4px', flex: 1 }}>${group.name}</span>
                         ${includeCount > 0 && html`<span style=${{ backgroundColor: '#2196F3', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px', marginLeft: '4px' }}>${includeCount}</span>`}
+                        ${includeOrCount > 0 && html`<span style=${{ backgroundColor: '#fb8c00', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px', marginLeft: '2px' }}>${includeOrCount}</span>`}
                         ${excludeCount > 0 && html`<span style=${{ backgroundColor: '#e53935', color: 'white', borderRadius: '10px', padding: '2px 6px', fontSize: '10px', marginLeft: '2px' }}>${excludeCount}</span>`}
                     </div>
                     ${isExpanded && html`
@@ -120,7 +165,8 @@ function TagFilterSidebar({ selectedTagIds, onChange }) {
             const entry = selectedTagIds.find(s => s.id === tag.id);
             const mode = entry ? entry.mode : 'none';
             const textStyle = mode === 'include' ? { color: '#2196F3', fontWeight: 'bold' } :
-                (mode === 'exclude' ? { color: '#e53935', fontWeight: 'bold', textDecoration: 'line-through' } : {});
+                (mode === 'include_or' ? { color: '#fb8c00', fontWeight: 'bold' } :
+                    (mode === 'exclude' ? { color: '#e53935', fontWeight: 'bold', textDecoration: 'line-through' } : {}));
             return html`
                                 <label key=${tag.id} style=${{ display: 'flex', alignItems: 'center', padding: '4px 0', cursor: 'pointer', fontSize: '13px' }} onClick=${(e) => { e.preventDefault(); toggleTag(tag.id); }}>
                                     <${TriStateCheckbox} tagId=${tag.id} />

@@ -195,25 +195,27 @@ function App() {
                 }
 
                 if (appliedFilters.tags?.length > 0) {
-                    const includeTags = appliedFilters.tags.filter(t => t.mode === 'include');
+                    const andTags = appliedFilters.tags.filter(t => t.mode === 'include');
+                    const orTags = appliedFilters.tags.filter(t => t.mode === 'include_or');
                     const excludeTags = appliedFilters.tags.filter(t => t.mode === 'exclude');
 
-                    if (includeTags.length > 0) {
-                        // 包含標籤: AND 邏輯，作品必須包含所有指定標籤
-                        joinClause += ' JOIN work_tag_link wtl ON w.id = wtl.work_id';
-                        whereClauses.push(`wtl.tag_id IN (${includeTags.map(() => '?').join(',')})`);
-                        params.push(...includeTags.map(t => t.id));
-                        groupBy = 'GROUP BY w.id';
-                        having = `HAVING COUNT(DISTINCT wtl.tag_id) = ${includeTags.length}`;
+                    // 選取(AND): 作品必須包含每一個指定標籤
+                    andTags.forEach(t => {
+                        whereClauses.push(`EXISTS (SELECT 1 FROM work_tag_link wtl WHERE wtl.work_id = w.id AND wtl.tag_id = ?)`);
+                        params.push(t.id);
+                    });
+
+                    // 選取(OR): 作品只需包含其中任一指定標籤
+                    if (orTags.length > 0) {
+                        whereClauses.push(`EXISTS (SELECT 1 FROM work_tag_link wtl WHERE wtl.work_id = w.id AND wtl.tag_id IN (${orTags.map(() => '?').join(',')}))`);
+                        params.push(...orTags.map(t => t.id));
                     }
 
-                    if (excludeTags.length > 0) {
-                        // 排除標籤: 作品必須不包含任何一個排除標籤
-                        excludeTags.forEach(t => {
-                            whereClauses.push(`NOT EXISTS (SELECT 1 FROM work_tag_link etl WHERE etl.work_id = w.id AND etl.tag_id = ?)`);
-                            params.push(t.id);
-                        });
-                    }
+                    // 排除標籤: 作品必須不包含任何一個排除標籤
+                    excludeTags.forEach(t => {
+                        whereClauses.push(`NOT EXISTS (SELECT 1 FROM work_tag_link etl WHERE etl.work_id = w.id AND etl.tag_id = ?)`);
+                        params.push(t.id);
+                    });
                 }
 
                 const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -396,8 +398,9 @@ function App() {
                 nameRows.forEach(r => { nameMap[r.id] = r.name; });
                 appliedFilters.tags.forEach(t => {
                     const isExclude = t.mode === 'exclude';
-                    const prefix = isExclude ? '排除標籤' : '包含標籤';
-                    conds.push({ key: `tag-${t.id}`, label: `${prefix}: ${nameMap[t.id] || t.id}`, exclude: isExclude, onRemove: () => handleRemoveTagFilter(t.id) });
+                    const isOr = t.mode === 'include_or';
+                    const prefix = isExclude ? '排除標籤' : (isOr ? '包含標籤(OR)' : '包含標籤(AND)');
+                    conds.push({ key: `tag-${t.id}`, label: `${prefix}: ${nameMap[t.id] || t.id}`, exclude: isExclude, isOr, onRemove: () => handleRemoveTagFilter(t.id) });
                 });
             } catch (e) { conds.push({ key: 'tagsError', label: `標籤: ${appliedFilters.tags.length}個` }); }
         }
@@ -483,9 +486,9 @@ function App() {
                                         </div>
                                         <div style=${{ fontSize: '14px', color: '#666', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                             ${getSearchConditions().length === 0 ? html`<div style=${{ color: '#999', fontStyle: 'italic' }}>尚未搜尋</div>` : html`<div style=${{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                                ${getSearchConditions().map(cond => html`<div key=${cond.key} style=${{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: cond.exclude ? '#ffebee' : '#e3f2fd', color: cond.exclude ? '#c62828' : '#0d47a1', padding: cond.onRemove ? '6px 6px 6px 10px' : '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: cond.exclude ? '1px solid #ffcdd2' : '1px solid #bbdefb' }}>
+                                                ${getSearchConditions().map(cond => html`<div key=${cond.key} style=${{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: cond.exclude ? '#ffebee' : (cond.isOr ? '#fff3e0' : '#e3f2fd'), color: cond.exclude ? '#c62828' : (cond.isOr ? '#e65100' : '#0d47a1'), padding: cond.onRemove ? '6px 6px 6px 10px' : '6px 10px', borderRadius: '6px', fontWeight: '500', width: 'fit-content', border: cond.exclude ? '1px solid #ffcdd2' : (cond.isOr ? '1px solid #ffe0b2' : '1px solid #bbdefb') }}>
                                                     <span>${cond.label}</span>
-                                                    ${cond.onRemove && html`<button className="btn-ghost" onClick=${cond.onRemove} title="移除此搜尋條件" style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2px', color: cond.exclude ? '#c62828' : '#0d47a1', borderRadius: '4px' }}>
+                                                    ${cond.onRemove && html`<button className="btn-ghost" onClick=${cond.onRemove} title="移除此搜尋條件" style=${{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2px', color: cond.exclude ? '#c62828' : (cond.isOr ? '#e65100' : '#0d47a1'), borderRadius: '4px' }}>
                                                         <${X} size=${14} />
                                                     </button>`}
                                                 </div>`)}
