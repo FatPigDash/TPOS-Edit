@@ -1,52 +1,41 @@
 // 演員資訊抓取模組 (minnano-av.com)
 // 在 Electron renderer (nodeIntegration + webSecurity:false) 環境執行,
-// 使用 Node https 直接抓取頁面 (可完整控制 HTTP 標頭以降低被判定為爬蟲的機率),
+// 以 utils/http 直接抓取頁面 (可完整控制 HTTP 標頭以降低被判定為爬蟲的機率),
 // 並以瀏覽器內建 DOMParser 解析 HTML。
-const https = require('https');
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+const { DESKTOP_USER_AGENT, fetchPage: httpFetchPage, downloadFile, guessImageExt } = require('../utils/http');
 
 const BASE = 'https://www.minnano-av.com';
-// 桌面瀏覽器 User-Agent (降低被判定為機器人的機率)
-const SCRAPER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 // 個人檔案表格可能出現的標籤 (用於 label 比對)
 const PROFILE_LABELS = ['別名', '生年月日', 'サイズ', 'AV出演期間', '血液型', '出身地', '所属事務所', '趣味・特技', 'デビュー作品', '愛称', 'ブログ', '公式サイト', 'タグ', '本名'];
 
-// 抓取單一頁面, 自動跟隨轉址, 回傳 { finalUrl, body }
-function fetchPage(url, redirectsLeft = 5) {
-    return new Promise((resolve, reject) => {
-        let parsed;
-        try { parsed = new URL(url); } catch (e) { reject(e); return; }
-        const mod = parsed.protocol === 'http:' ? http : https;
-        const req = mod.get(url, {
-            headers: {
-                'User-Agent': SCRAPER_UA,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'ja,zh-TW;q=0.8,zh;q=0.7,en;q=0.6',
-                'Accept-Encoding': 'identity',
-                'Referer': BASE + '/'
-            }
-        }, (res) => {
-            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
-                res.resume();
-                let next;
-                try { next = new URL(res.headers.location, url).toString(); } catch (e) { reject(e); return; }
-                fetchPage(next, redirectsLeft - 1).then(resolve, reject);
-                return;
-            }
-            if (res.statusCode !== 200) {
-                res.resume();
-                reject(new Error('HTTP ' + res.statusCode));
-                return;
-            }
-            const chunks = [];
-            res.on('data', c => chunks.push(c));
-            res.on('end', () => resolve({ finalUrl: url, body: Buffer.concat(chunks).toString('utf8') }));
-        });
-        req.on('error', reject);
-        req.setTimeout(20000, () => { req.destroy(new Error('連線逾時')); });
+// 抓取 minnano-av 頁面 (帶入桌面瀏覽器標頭以降低被判定為爬蟲的機率)
+function fetchPage(url) {
+    return httpFetchPage(url, {
+        headers: {
+            'User-Agent': DESKTOP_USER_AGENT,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ja,zh-TW;q=0.8,zh;q=0.7,en;q=0.6',
+            'Accept-Encoding': 'identity',
+            'Referer': BASE + '/'
+        },
+        timeoutMs: 20000,
+        timeoutMessage: '連線逾時'
+    });
+}
+
+// 下載圖片到指定路徑 (帶 Referer 避免被擋)
+function downloadImage(url, destPath) {
+    return downloadFile(url, destPath, {
+        headers: {
+            'User-Agent': DESKTOP_USER_AGENT,
+            'Referer': BASE + '/',
+            'Accept-Language': 'ja,zh-TW;q=0.8,en;q=0.6'
+        },
+        errorPrefix: '下載圖片失敗',
+        emptyUrlMessage: '沒有圖片網址',
+        timeoutMs: 20000,
+        timeoutMessage: '下載逾時'
     });
 }
 
@@ -62,13 +51,7 @@ function cleanBirthdate(value) {
     return value.split(/[（(]/)[0].replace(/\s+/g, ' ').trim();
 }
 
-// サイズ: 正規化空白
-function cleanSizes(value) {
-    if (!value) return '';
-    return value.replace(/\s+/g, ' ').trim();
-}
-
-// 別名 / 一般值: 正規化空白
+// 別名 / サイズ / 一般值: 正規化空白
 function cleanValue(value) {
     if (!value) return '';
     return value.replace(/\s+/g, ' ').trim();
@@ -293,7 +276,7 @@ function parseProfile(htmlBody) {
         } else if (label === '生年月日') {
             result.birthdate = cleanBirthdate(value);
         } else if (label === 'サイズ') {
-            result.sizes = cleanSizes(value);
+            result.sizes = cleanValue(value);
         } else if (label === 'AV出演期間') {
             result.av_period = cleanValue(value);
         }
@@ -313,68 +296,12 @@ async function scrapeActorByName(rawName) {
     return { success: true, data, sourceUrl: found.url };
 }
 
-// 下載圖片到指定路徑 (帶 Referer 避免被擋)
-function downloadImage(url, destPath) {
-    return new Promise((resolve, reject) => {
-        if (!url) { reject(new Error('沒有圖片網址')); return; }
-        const target = url.startsWith('//') ? 'https:' + url : url;
-        const attempt = (u, redirectsLeft) => {
-            let parsed;
-            try { parsed = new URL(u); } catch (e) { reject(e); return; }
-            const mod = parsed.protocol === 'http:' ? http : https;
-            const req = mod.get(u, {
-                headers: {
-                    'User-Agent': SCRAPER_UA,
-                    'Referer': BASE + '/',
-                    'Accept-Language': 'ja,zh-TW;q=0.8,en;q=0.6'
-                }
-            }, (res) => {
-                if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
-                    res.resume();
-                    attempt(new URL(res.headers.location, u).toString(), redirectsLeft - 1);
-                    return;
-                }
-                if (res.statusCode !== 200) {
-                    res.resume();
-                    reject(new Error('下載圖片失敗 (HTTP ' + res.statusCode + ')'));
-                    return;
-                }
-                const fileStream = fs.createWriteStream(destPath);
-                res.pipe(fileStream);
-                fileStream.on('finish', () => fileStream.close(() => resolve(true)));
-                fileStream.on('error', (err) => {
-                    try { fs.unlinkSync(destPath); } catch (e) { }
-                    reject(err);
-                });
-            });
-            req.on('error', reject);
-            req.setTimeout(20000, () => { req.destroy(new Error('下載逾時')); });
-        };
-        attempt(target, 5);
-    });
-}
-
-// 由圖片網址推斷副檔名 (預設 .jpg)
-function guessImageExt(url) {
-    try {
-        const u = new URL(url.startsWith('//') ? 'https:' + url : url);
-        const ext = path.extname(u.pathname);
-        if (ext && ext.length <= 5) return ext.toLowerCase();
-    } catch (e) { }
-    return '.jpg';
-}
-
 module.exports = {
     scrapeActorByName,
     lookupActress,
     scrapeActressUrl,
-    parseSearchCandidates,
+    parseProfile,
     downloadImage,
     guessImageExt,
-    fetchPage,
-    parseProfile,
-    cleanSearchName,
-    cleanBirthdate,
-    cleanSizes,
-    cleanValue
+    cleanSearchName
 };

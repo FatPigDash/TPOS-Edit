@@ -16,7 +16,7 @@ const PRESET_COLORS = [
     '#48DBFB', '#5F27CD', '#FF9FF3', '#576574'
 ];
 
-// 7. 標籤系統元件 (Tag System) — 欄位/整列呈現 (放棄看板模式)
+// 標籤系統元件 (Tag System) — 以整列呈現各標籤組
 
 function TagDeleteModal({ tagId, tagName, onClose, onDeleteSuccess }) {
     const [usageCount, setUsageCount] = React.useState(0);
@@ -116,43 +116,31 @@ function TagSystem({ canGoBack, onGoBack }) {
         }
     };
 
-    const handleOpenGroupMenu = (group, e) => {
-        e.stopPropagation();
-        if (menuOpenGroupId === group.id) setMenuOpenGroupId(null);
-        else {
-            const rect = e.currentTarget.getBoundingClientRect();
-            let x = rect.left;
-            let y = rect.bottom + 4;
-            // 邊界偵測：若太靠右邊則往左推
-            if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
-            // 邊界偵測：若太靠下方則往上彈出
-            if (y + 250 > window.innerHeight) y = rect.top - 250;
-
-            setMenuPos({ x, y });
-            setMenuOpenGroupId(group.id);
-            setMenuOpenTagId(null);
-            setPendingColor(group.color || null);
-        }
+    // 依觸發按鈕位置計算選單座標 (太靠右則往左推, 太靠下則往上彈出)
+    const menuPosFor = (btn) => {
+        const rect = btn.getBoundingClientRect();
+        return {
+            x: rect.left + 240 > window.innerWidth ? window.innerWidth - 250 : rect.left,
+            y: rect.bottom + 4 + 250 > window.innerHeight ? rect.top - 250 : rect.bottom + 4
+        };
     };
 
-    const handleOpenTagMenu = (tag, e) => {
+    // 開啟群組/標籤的設定選單 (再次點擊同一個則關閉)
+    const openMenu = (item, e, isGroup) => {
         e.stopPropagation();
-        if (menuOpenTagId === tag.id) setMenuOpenTagId(null);
-        else {
-            const rect = e.currentTarget.getBoundingClientRect();
-            let x = rect.left;
-            let y = rect.bottom + 4;
-            // 邊界偵測：若太靠右邊則往左推
-            if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
-            // 邊界偵測：若太靠下方則往上彈出
-            if (y + 250 > window.innerHeight) y = rect.top - 250;
+        const openId = isGroup ? menuOpenGroupId : menuOpenTagId;
+        const setOpenId = isGroup ? setMenuOpenGroupId : setMenuOpenTagId;
+        const setOtherId = isGroup ? setMenuOpenTagId : setMenuOpenGroupId;
 
-            setMenuPos({ x, y });
-            setMenuOpenTagId(tag.id);
-            setMenuOpenGroupId(null);
-            setPendingColor(tag.color || null);
-        }
+        if (openId === item.id) { setOpenId(null); return; }
+        setMenuPos(menuPosFor(e.currentTarget));
+        setOpenId(item.id);
+        setOtherId(null);
+        setPendingColor(item.color || null);
     };
+
+    const handleOpenGroupMenu = (group, e) => openMenu(group, e, true);
+    const handleOpenTagMenu = (tag, e) => openMenu(tag, e, false);
 
     const handleCreateGroup = (e) => {
         if (!db) return;

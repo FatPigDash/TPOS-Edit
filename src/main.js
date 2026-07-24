@@ -1,9 +1,5 @@
-/*
-• TPOS (The Pile of Shame) 軟體開發 - Main Process
-• 版本: V1.3.3
-• 修正: 調整 get-video-metadata 回傳格式 (純數字時長), 加強錯誤處理
-*/
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+// TPOS (The Pile of Shame) - Main Process
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const remoteMain = require('@electron/remote/main');
 const fs = require('fs');
@@ -95,14 +91,8 @@ ipcMain.handle('get-video-metadata', async (event, filePath) => {
         else if (width === 3840 && height === 2160) resolution = "4K (UHD)";
         else if (width === 1280 && height === 720) resolution = "720p (HD)";
         
-        // 格式化時間 (四捨五入到分鐘)
-        // 修改: 僅回傳數字，不帶單位
-        const durationMinutes = Math.round(durationSec / 60);
-
-        resolve({
-          resolution: resolution,
-          duration: durationMinutes
-        });
+        // 時長四捨五入到分鐘 (僅回傳數字, 不帶單位)
+        resolve({ resolution, duration: Math.round(durationSec / 60) });
       } catch (processErr) {
         console.error("Metadata Processing Error:", processErr);
         reject(processErr);

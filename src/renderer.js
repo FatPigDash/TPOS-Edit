@@ -1,7 +1,4 @@
-/*
-• TPOS (The Pile of Shame) 軟體開發 - Renderer Process
-• 版本: V1.5.6 (新增作品名稱排序)
-*/
+// TPOS (The Pile of Shame) - Renderer Process
 const React = require('react');
 const ReactDOM = require('react-dom/client');
 const htm = require('htm');
@@ -20,7 +17,7 @@ const {
 
 const { fullTitle } = require('./version');
 const { db } = require('./utils/db');
-const { parseSearchQuery, parseCodeSearchQuery } = require('./utils/helpers');
+const { parseSearchQuery, parseCodeSearchQuery, toggleSortDirection } = require('./utils/helpers');
 const {
     ErrorBoundary, LoadingOverlay, Pagination
 } = require('./components/Shared');
@@ -32,14 +29,29 @@ const { ActorSystem } = require('./components/ActorSystem');
 const { FileOrganizerSystem } = require('./components/FileOrganizer');
 const { VideoImportSystem } = require('./components/VideoImport');
 
-// 反轉排序方向 (asc <-> desc)
-const toggleSortDirection = (order) => {
-    if (order.endsWith('_asc')) return order.slice(0, -4) + '_desc';
-    if (order.endsWith('_desc')) return order.slice(0, -5) + '_asc';
-    return order;
-};
+// 作品排序選項: [值, 顯示文字, ORDER BY 子句]
+const WORK_SORT_OPTIONS = [
+    ['created_desc', '新增時間 (新 → 舊)', 'w.created_at DESC'],
+    ['created_asc', '新增時間 (舊 → 新)', 'w.created_at ASC'],
+    ['code_asc', '識別碼 (A → Z)', 'w.work_number ASC'],
+    ['code_desc', '識別碼 (Z → A)', 'w.work_number DESC'],
+    ['name_asc', '作品名稱 (A → Z)', 'w.name ASC'],
+    ['name_desc', '作品名稱 (Z → A)', 'w.name DESC'],
+    ['rating_desc', '評分 (高 → 低)', 'w.rating DESC, w.created_at DESC'],
+    ['rating_asc', '評分 (低 → 高)', 'w.rating ASC, w.created_at DESC'],
+    ['release_date_desc', '發行日期 (新 → 舊)', 'w.release_date DESC, w.created_at DESC'],
+    ['release_date_asc', '發行日期 (舊 → 新)', 'w.release_date ASC, w.created_at DESC']
+];
+const WORK_ORDER_BY = Object.fromEntries(WORK_SORT_OPTIONS.map(([value, , sql]) => [value, sql]));
 
-// 9. 主程式進入點 (App & Main)
+// 空白的篩選條件 (初始值與「清除篩選」共用)
+const createEmptyFilters = () => ({
+    name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte',
+    actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false
+});
+const createEmptyActorFilters = () => ({ name: "", code: "", isFavorite: false, scrapeFailed: false });
+
+// 主程式進入點 (App & Main)
 
 function App() {
     const ITEMS_PER_PAGE = 15;
@@ -54,17 +66,16 @@ function App() {
     // 排序狀態: created_desc (預設), code_asc, rating_desc, name_asc
     const [sortOrder, setSortOrder] = React.useState('created_desc');
 
-    // V2.2.x: 新增 hasFavActor 與 isWatchLater 狀態
-    const [uiFilters, setUiFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
-    const [appliedFilters, setAppliedFilters] = React.useState({ name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false });
+    const [uiFilters, setUiFilters] = React.useState(createEmptyFilters);
+    const [appliedFilters, setAppliedFilters] = React.useState(createEmptyFilters);
     const [currentPage, setCurrentPage] = React.useState(1);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
     const [isLoading, setIsLoading] = React.useState(false);
 
     // 演員資料庫狀態 (提升至 App 層級，以便導覽歷史可以記錄/還原)
-    const [actorUiFilters, setActorUiFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false, scrapeFailed: false });
-    const [actorAppliedFilters, setActorAppliedFilters] = React.useState({ name: "", code: "", noImage: false, isFavorite: false, scrapeFailed: false });
+    const [actorUiFilters, setActorUiFilters] = React.useState(createEmptyActorFilters);
+    const [actorAppliedFilters, setActorAppliedFilters] = React.useState(createEmptyActorFilters);
     const [actorSortOrder, setActorSortOrder] = React.useState('number_desc');
     const [actorViewMode, setActorViewMode] = React.useState('normal'); // 'normal' | 'duplicates'
     const [actorCurrentPage, setActorCurrentPage] = React.useState(1);
@@ -151,26 +162,38 @@ function App() {
         setIsLoading(true);
         setTimeout(async () => {
             try {
-                let whereClauses = [];
+                const whereClauses = [];
                 const params = [];
-                let joinClause = 'LEFT JOIN work_images wi ON w.id = wi.work_id AND wi.is_cover = 1';
-                let groupBy = '';
-                let having = '';
+                const joinClause = 'LEFT JOIN work_images wi ON w.id = wi.work_id AND wi.is_cover = 1';
 
-                // 修正: 將 \s+ 改為 \s*, 允許開頭無空白, 解決 "WHERE AND (...)" 的語法錯誤
-                if (appliedFilters.name) { const q = parseSearchQuery(appliedFilters.name, 'w.name'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.code) { const q = parseCodeSearchQuery(appliedFilters.code, 'w.work_number'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.director) { const q = parseSearchQuery(appliedFilters.director, 'w.director'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.maker) { const q = parseSearchQuery(appliedFilters.maker, 'w.maker'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.publisher) { const q = parseSearchQuery(appliedFilters.publisher, 'w.publisher'); if (q.sql) { whereClauses.push(q.sql.replace(/^\s*AND\s*/, '')); params.push(...q.params); } }
-                if (appliedFilters.rating && appliedFilters.rating.trim() !== '') { const rVal = parseFloat(appliedFilters.rating); if (!isNaN(rVal)) { const rOp = appliedFilters.ratingMode === 'eq' ? '=' : '>='; whereClauses.push(`w.rating ${rOp} ?`); params.push(rVal); } }
+                // 文字欄位: 依各自的搜尋語法產生 LIKE 條件
+                const addTextFilter = (value, field, parse) => {
+                    if (!value) return;
+                    const q = parse(value, field);
+                    if (!q.sql) return;
+                    whereClauses.push(q.sql);
+                    params.push(...q.params);
+                };
+                addTextFilter(appliedFilters.name, 'w.name', parseSearchQuery);
+                addTextFilter(appliedFilters.code, 'w.work_number', parseCodeSearchQuery);
+                addTextFilter(appliedFilters.director, 'w.director', parseSearchQuery);
+                addTextFilter(appliedFilters.maker, 'w.maker', parseSearchQuery);
+                addTextFilter(appliedFilters.publisher, 'w.publisher', parseSearchQuery);
 
-                // 新增: 待看關注篩選
+                if (appliedFilters.rating && appliedFilters.rating.trim() !== '') {
+                    const rVal = parseFloat(appliedFilters.rating);
+                    if (!isNaN(rVal)) {
+                        whereClauses.push(`w.rating ${appliedFilters.ratingMode === 'eq' ? '=' : '>='} ?`);
+                        params.push(rVal);
+                    }
+                }
+
+                // 待看關注
                 if (appliedFilters.isWatchLater) {
                     whereClauses.push('w.is_favorite = 1');
                 }
 
-                // 新增: 關注演員篩選 (使用 EXISTS 子查詢)
+                // 關注演員 (使用 EXISTS 子查詢)
                 if (appliedFilters.hasFavActor) {
                     whereClauses.push('EXISTS (SELECT 1 FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1)');
                 }
@@ -219,43 +242,19 @@ function App() {
                 }
 
                 const whereSql = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-                const countSql = groupBy ? `SELECT COUNT(*) as count FROM (SELECT w.id FROM works w ${joinClause} ${whereSql} ${groupBy} ${having})` : `SELECT COUNT(*) as count FROM works w ${whereSql}`;
 
-                const countResult = db.prepare(countSql).get(...params);
+                const countResult = db.prepare(`SELECT COUNT(*) as count FROM works w ${whereSql}`).get(...params);
                 const currentTotal = countResult ? countResult.count : 0;
                 setTotalItems(currentTotal);
                 const totalP = Math.ceil(currentTotal / ITEMS_PER_PAGE) || 1;
                 setTotalPages(totalP);
 
-                let targetPage = Math.min(currentPage, totalP);
-                const offset = (targetPage - 1) * ITEMS_PER_PAGE;
+                const offset = (Math.min(currentPage, totalP) - 1) * ITEMS_PER_PAGE;
+                const orderByClause = WORK_ORDER_BY[sortOrder] || WORK_ORDER_BY.created_desc;
 
-                // 決定排序方式
-                let orderByClause = 'w.created_at DESC'; // 預設: 新增時間(新到舊)
-                if (sortOrder === 'code_asc') {
-                    orderByClause = 'w.work_number ASC';
-                } else if (sortOrder === 'rating_desc') {
-                    orderByClause = 'w.rating DESC, w.created_at DESC';
-                } else if (sortOrder === 'name_asc') {
-                    orderByClause = 'w.name ASC';
-                } else if (sortOrder === 'name_desc') {
-                    orderByClause = 'w.name DESC';
-                } else if (sortOrder === 'code_desc') {
-                    orderByClause = 'w.work_number DESC';
-                } else if (sortOrder === 'rating_asc') {
-                    orderByClause = 'w.rating ASC, w.created_at DESC';
-                } else if (sortOrder === 'created_asc') {
-                    orderByClause = 'w.created_at ASC';
-                } else if (sortOrder === 'release_date_desc') {
-                    orderByClause = 'w.release_date DESC, w.created_at DESC';
-                } else if (sortOrder === 'release_date_asc') {
-                    orderByClause = 'w.release_date ASC, w.created_at DESC';
-                }
-
-                // 修改查詢: 增加 fav_actor_count 欄位，用於判斷是否顯示「關注演員」圖示
+                // fav_actor_count 用於判斷是否顯示「關注演員」圖示
                 const selectFields = `w.*, wi.file_name as cover_image, (SELECT COUNT(*) FROM work_actor_link wal JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = w.id AND a.is_favorite = 1) as fav_actor_count`;
-                // 使用動態 orderByClause
-                const rows = db.prepare(`SELECT ${selectFields} FROM works w ${joinClause} ${whereSql} ${groupBy} ${having} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
+                const rows = db.prepare(`SELECT ${selectFields} FROM works w ${joinClause} ${whereSql} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`).all(...params, ITEMS_PER_PAGE, offset);
 
                 const firstGroupOrderResult = db.prepare('SELECT MIN(sort_order) as min_order FROM tag_groups').get();
                 const globalFirstGroupOrder = firstGroupOrderResult ? firstGroupOrderResult.min_order : null;
@@ -409,7 +408,7 @@ function App() {
 
     const handleClearFilter = () => {
         pushHistory();
-        const empty = { name: '', code: '', director: '', maker: '', publisher: '', rating: '', ratingMode: 'gte', actor: { mode: 'OR', items: [], inputValue: "" }, tags: [], hasFavActor: false, isWatchLater: false };
+        const empty = createEmptyFilters();
         setUiFilters(empty);
         setAppliedFilters(empty);
     };
@@ -426,19 +425,6 @@ function App() {
         setActorDetailId(actorId);
         setActorDetailFromWork(true);
         setActiveTab('actors');
-    };
-
-    const handleActorQuickSearch = (actor) => {
-        pushHistory();
-        const actorFilter = { mode: 'OR', items: [{ id: actor.id, name: actor.name }], inputValue: "" };
-        const newFilters = {
-            name: "", code: "", director: "", maker: "", publisher: "", rating: "", ratingMode: 'gte',
-            actor: actorFilter, tags: [], hasFavActor: false, isWatchLater: false
-        };
-        setUiFilters(newFilters);
-        setAppliedFilters(newFilters);
-        setActiveTab('works');
-        setViewMode('list');
     };
 
     return html`
@@ -502,16 +488,7 @@ function App() {
                                             <${ArrowUpDown} size=${16} color="#666" />
                                         </button>
                                         <select className="filter-input" style=${{ width: 'auto', padding: '6px 12px', cursor: 'pointer', marginRight: '8px', border: 'none', backgroundColor: 'transparent', fontWeight: 'bold' }} value=${sortOrder} onChange=${e => { pushHistory(); setSortOrder(e.target.value); }}>
-                                            <option value="created_desc">新增時間 (新 → 舊)</option>
-                                            <option value="created_asc">新增時間 (舊 → 新)</option>
-                                            <option value="code_asc">識別碼 (A → Z)</option>
-                                            <option value="code_desc">識別碼 (Z → A)</option>
-                                            <option value="name_asc">作品名稱 (A → Z)</option>
-                                            <option value="name_desc">作品名稱 (Z → A)</option>
-                                            <option value="rating_desc">評分 (高 → 低)</option>
-                                            <option value="rating_asc">評分 (低 → 高)</option>
-                                            <option value="release_date_desc">發行日期 (新 → 舊)</option>
-                                            <option value="release_date_asc">發行日期 (舊 → 新)</option>
+                                            ${WORK_SORT_OPTIONS.map(([value, label]) => html`<option key=${value} value=${value}>${label}</option>`)}
                                         </select>
                                         <button className="btn-ghost" onClick=${handleBatchMoveId} title="將識別碼從名稱開頭移至尾端" style=${{ padding: '6px 10px', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #ddd' }}>
                                             <${FileText} size=${16} />
@@ -534,7 +511,7 @@ function App() {
                 <${TagSystem} canGoBack=${navHistory.length > 0} onGoBack=${goBack} />
             </div>
             <div style=${{ flex: 1, overflow: 'hidden', display: activeTab === 'actors' ? 'block' : 'none' }}>
-                <${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWork=${handleActorQuickSearch} onNavigateToWorkDetails=${handleNavigateToWorkDetails}
+                <${ActorSystem} setIsLoading=${setIsLoading} onNavigateToWorkDetails=${handleNavigateToWorkDetails}
                     uiFilters=${actorUiFilters} setUiFilters=${setActorUiFilters}
                     appliedFilters=${actorAppliedFilters} setAppliedFilters=${setActorAppliedFilters}
                     sortOrder=${actorSortOrder} setSortOrder=${setActorSortOrder}

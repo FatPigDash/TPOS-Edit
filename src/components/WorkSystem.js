@@ -11,31 +11,16 @@ const {
     Save, Plus, Trash2, Download, PanelLeft, Bookmark, Play, FolderInput, Folder
 } = require('lucide-react');
 
-const { db, worksImgDir, actorsImgDir } = require('../utils/db');
+const { db, worksImgDir } = require('../utils/db');
 const {
-    getFileUrl, parseSearchQuery, stopPropagation, getNewActorNumber, getOrCreateActorId, getContrastYIQ
+    getFileUrl, stopPropagation, getOrCreateActorId, getContrastYIQ
 } = require('../utils/helpers');
 const {
     ConfirmModal, ImageViewerModal, SearchHelpText, CodeSearchHelpText
 } = require('./Shared');
 const { ScraperModal } = require('./Scraper');
 
-// 自動資料庫結構升級: 確保 works 表有 notes 欄位
-let migrationDone = false;
-const ensureNotesColumn = () => {
-    if (!db || migrationDone) return;
-    try {
-        const columns = db.prepare('PRAGMA table_info(works)').all();
-        if (!columns.some(c => c.name === 'notes')) {
-            db.prepare('ALTER TABLE works ADD COLUMN notes TEXT DEFAULT ""').run();
-        }
-        migrationDone = true;
-    } catch (e) {
-        console.error("Migration error:", e);
-    }
-};
-
-// 5. 篩選與選擇元件 (Filter & Selector)
+// 篩選與選擇元件 (Filter & Selector)
 
 function TagFilterSidebar({ selectedTagIds, onChange }) {
     const [groups, setGroups] = React.useState([]);
@@ -481,7 +466,38 @@ function TagSelector({ selectedTags, onChange }) {
         </div>`;
 }
 
-// 8. 作品系統元件 (Work System)
+// 作品系統元件 (Work System)
+
+// 主預覽圖左右切換箭頭的定位樣式
+const navBtnStyle = (side) => ({
+    position: 'absolute', [side]: '10px', top: '50%', transform: 'translateY(-50%)',
+    backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer'
+});
+
+// 主預覽圖 (含左右循環切換箭頭); 有 onImageClick 時圖片可點擊放大
+function MainPreview({ src, count, onPrev, onNext, onImageClick }) {
+    return html`
+        <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            ${src ? html`
+                <img src="${src}" onClick=${onImageClick}
+                    style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', ...(onImageClick ? { cursor: 'zoom-in' } : {}) }} />
+                ${count > 1 && html`
+                    <div className="preview-nav-btn prev" onClick=${onPrev} style=${navBtnStyle('left')}><${ChevronLeftIcon} size=${24} /></div>
+                    <div className="preview-nav-btn next" onClick=${onNext} style=${navBtnStyle('right')}><${ChevronRightIcon} size=${24} /></div>
+                `}
+            ` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
+        </div>`;
+}
+
+// 圖片預覽的左右循環切換 (供作品詳情與編輯頁共用)
+function useImageNavigation(count, setPreviewIndex) {
+    const step = (delta) => (e) => {
+        stopPropagation(e);
+        if (count <= 1) return;
+        setPreviewIndex(prev => (prev + delta + count) % count);
+    };
+    return { handlePrevImage: step(-1), handleNextImage: step(1) };
+}
 
 // 時間字串解析 (支援 HH:MM:SS、MM:SS 格式，以及純數字視為分鐘；回傳秒數，無法解析回傳 null)
 function parseTimeToSeconds(timeStr) {
@@ -565,9 +581,9 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
     const [linkedTags, setLinkedTags] = React.useState([]);
     const [isFilterSidebarOpen, setIsFilterSidebarOpen] = React.useState(false);
     const { isPlaying, videoCandidates, setVideoCandidates, playPath, findAndPlay } = useVideoPlayer();
+    const { handlePrevImage, handleNextImage } = useImageNavigation(images.length, setPreviewIndex);
 
     React.useEffect(() => {
-        ensureNotesColumn(); // 確保資料庫有 notes 欄位
         if (!db) return;
         try {
             setWork(db.prepare('SELECT * FROM works WHERE id=?').get(workId));
@@ -580,29 +596,14 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
 
             setImages(loadedImages);
 
+            // 有封面圖時以封面為預設預覽
             const coverIndex = loadedImages.findIndex(img => img.isCover);
-            if (coverIndex !== -1) {
-                setPreviewIndex(coverIndex);
-            } else {
-                setPreviewIndex(0);
-            }
+            setPreviewIndex(coverIndex === -1 ? 0 : coverIndex);
 
             setLinkedActors(db.prepare(`SELECT CASE WHEN wal.actor_id IS NOT NULL THEN a.name ELSE wal.actor_name END as name, a.image_path, a.actor_number, CASE WHEN a.is_deleted = 0 THEN wal.actor_id ELSE NULL END as actor_id FROM work_actor_link wal LEFT JOIN actors a ON wal.actor_id = a.id WHERE wal.work_id = ? ORDER BY wal.sort_order ASC`).all(workId));
             setLinkedTags(db.prepare(`SELECT t.id, t.name, t.color, tg.name as group_name, tg.color as group_color FROM work_tag_link wtl JOIN tags t ON wtl.tag_id = t.id JOIN tag_groups tg ON t.group_id = tg.id WHERE wtl.work_id = ? ORDER BY tg.sort_order ASC, t.sort_order ASC`).all(workId));
         } catch (err) { console.error(err); }
     }, [workId]);
-
-    const handlePrevImage = (e) => {
-        stopPropagation(e);
-        if (images.length <= 1) return;
-        setPreviewIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
-    };
-
-    const handleNextImage = (e) => {
-        stopPropagation(e);
-        if (images.length <= 1) return;
-        setPreviewIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
-    };
 
     const handleMiddleClickActor = (e, actor) => {
         if (e.button === 1) {
@@ -657,19 +658,9 @@ function WorkDetails({ workId, onEdit, uiFilters, setUiFilters, onApply, onClear
                     </button>
                     <h3 style=${{ margin: 0 }}>作品預覽</h3>
                 </div>
-                <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', marginBottom: '10px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    ${images[previewIndex] ? html`
-                        <img src="${images[previewIndex].url}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', cursor: 'zoom-in' }} onClick=${() => setViewingImage(images[previewIndex].url)} />
-                        ${images.length > 1 && html`
-                            <div className="preview-nav-btn prev" onClick=${handlePrevImage} style=${{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
-                                <${ChevronLeftIcon} size=${24} />
-                            </div>
-                            <div className="preview-nav-btn next" onClick=${handleNextImage} style=${{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
-                                <${ChevronRightIcon} size=${24} />
-                            </div>
-                        `}
-                    ` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
-                </div>
+                <${MainPreview} src=${images[previewIndex] && images[previewIndex].url} count=${images.length}
+                    onPrev=${handlePrevImage} onNext=${handleNextImage}
+                    onImageClick=${() => setViewingImage(images[previewIndex].url)} />
                 <div className="thumbnail-list" style=${{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                     ${images.map((img, idx) => html`<div className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" style=${{ width: 160, height: 100, flexShrink: 0 }} onClick=${() => setPreviewIndex(idx)}><img src="${img.url}" /></div>`)}
                 </div>
@@ -871,7 +862,6 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
     };
 
     React.useEffect(() => {
-        ensureNotesColumn(); // 確保資料庫有 notes 欄位
         if (!db) return;
         if (isEditMode) {
             try {
@@ -901,17 +891,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         }
     }, [initialWorkId]);
 
-    const handlePrevImage = (e) => {
-        stopPropagation(e);
-        if (images.length <= 1) return;
-        setPreviewIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
-    };
-
-    const handleNextImage = (e) => {
-        stopPropagation(e);
-        if (images.length <= 1) return;
-        setPreviewIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
-    };
+    const { handlePrevImage, handleNextImage } = useImageNavigation(images.length, setPreviewIndex);
 
     const handleChange = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -1151,7 +1131,6 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
         }, 100);
     };
 
-    const stopProp = (e) => { e.stopPropagation(); };
 
     return html`
         ${showDirtyWarning && html`<${ConfirmModal} title="尚未儲存的變更" message="您有尚未儲存的變更, 確定要捨棄嗎?" confirmText="繼續編輯" cancelText="放棄變更" onConfirm=${() => setShowDirtyWarning(false)} onCancel=${onCancel} />`}
@@ -1211,19 +1190,8 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                             </button>
                         `}
                     </div>
-                    <div className="main-preview" style=${{ flex: 3, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px', position: 'relative' }}>
-                        ${images[previewIndex] ? html`
-                            <img src="${images[previewIndex].previewUrl}" style=${{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                            ${images.length > 1 && html`
-                                <div className="preview-nav-btn prev" onClick=${handlePrevImage} style=${{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
-                                    <${ChevronLeftIcon} size=${24} />
-                                </div>
-                                <div className="preview-nav-btn next" onClick=${handleNextImage} style=${{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '50%', padding: '8px', cursor: 'pointer' }}>
-                                    <${ChevronRightIcon} size=${24} />
-                                </div>
-                            `}
-                        ` : html`<div style=${{ color: '#666' }}>無圖片</div>`}
-                    </div>
+                    <${MainPreview} src=${images[previewIndex] && images[previewIndex].previewUrl} count=${images.length}
+                        onPrev=${handlePrevImage} onNext=${handleNextImage} />
                     <div className="thumbnail-list" style=${{ flex: 1, minHeight: '120px', gridTemplateColumns: 'repeat(auto-fill, 160px)', overflowY: 'auto' }}>
                         ${images.map((img, idx) => html`
                             <div key=${img.id} className="thumbnail-item ${idx === previewIndex ? 'active' : ''}" draggable="true" onDragStart=${() => setDraggingIndex(idx)} onDragOver=${e => e.preventDefault()} onDrop=${e => handleSortDrop(e, idx)} onClick=${() => setPreviewIndex(idx)} style=${{ height: '100px', width: '160px', position: 'relative' }}>
@@ -1254,26 +1222,26 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                     <div className="filter-group">
                         <label className="filter-label">識別碼</label>
                         <div style=${{ display: 'flex', gap: '8px' }}>
-                            <input className="filter-input" style=${{ flex: 1 }} value=${formData.work_number || ''} onInput=${e => handleChange('work_number', e.target.value)} onMouseDown=${stopProp} />
+                            <input className="filter-input" style=${{ flex: 1 }} value=${formData.work_number || ''} onInput=${e => handleChange('work_number', e.target.value)} onMouseDown=${stopPropagation} />
                             <button className="btn-primary" onClick=${() => setIsScraperOpen(true)} style=${{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#17a2b8' }}>
                                 <${Download} size=${16} /> 自動抓取
                             </button>
                         </div>
                     </div>
-                    <div className="filter-group"><label className="filter-label">作品名稱</label><input className="filter-input" value=${formData.name || ''} onInput=${e => handleChange('name', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">發行日期</label><input type="date" className="filter-input" value=${formData.release_date || ''} onInput=${e => handleChange('release_date', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">影片解析度</label><input className="filter-input" value=${formData.resolution || ''} onInput=${e => handleChange('resolution', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">影片長度</label><input className="filter-input" value=${formData.duration || ''} onInput=${e => handleChange('duration', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><div style=${{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}><label className="filter-label" style=${{ margin: 0 }}>實際檔案長度</label>${(() => { const dSec = parseTimeToSeconds(formData.duration); const fSec = parseTimeToSeconds(formData.file_size); return (dSec !== null && fSec !== null && (dSec - fSec) >= 900) ? html`<span style=${{ color: '#dc3545', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap' }}>⚠ 影片長度不足</span>` : null; })()}</div><input className="filter-input" value=${formData.file_size || ''} onInput=${e => handleChange('file_size', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">導演</label><input className="filter-input" value=${formData.director || ''} onInput=${e => handleChange('director', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">製作商</label><input className="filter-input" value=${formData.maker || ''} onInput=${e => handleChange('maker', e.target.value)} onMouseDown=${stopProp} /></div>
-                    <div className="filter-group"><label className="filter-label">發行商</label><input className="filter-input" value=${formData.publisher || ''} onInput=${e => handleChange('publisher', e.target.value)} onMouseDown=${stopProp} /></div>
+                    <div className="filter-group"><label className="filter-label">作品名稱</label><input className="filter-input" value=${formData.name || ''} onInput=${e => handleChange('name', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">發行日期</label><input type="date" className="filter-input" value=${formData.release_date || ''} onInput=${e => handleChange('release_date', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">影片解析度</label><input className="filter-input" value=${formData.resolution || ''} onInput=${e => handleChange('resolution', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">影片長度</label><input className="filter-input" value=${formData.duration || ''} onInput=${e => handleChange('duration', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><div style=${{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}><label className="filter-label" style=${{ margin: 0 }}>實際檔案長度</label>${(() => { const dSec = parseTimeToSeconds(formData.duration); const fSec = parseTimeToSeconds(formData.file_size); return (dSec !== null && fSec !== null && (dSec - fSec) >= 900) ? html`<span style=${{ color: '#dc3545', fontWeight: 'bold', fontSize: '13px', whiteSpace: 'nowrap' }}>⚠ 影片長度不足</span>` : null; })()}</div><input className="filter-input" value=${formData.file_size || ''} onInput=${e => handleChange('file_size', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">導演</label><input className="filter-input" value=${formData.director || ''} onInput=${e => handleChange('director', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">製作商</label><input className="filter-input" value=${formData.maker || ''} onInput=${e => handleChange('maker', e.target.value)} onMouseDown=${stopPropagation} /></div>
+                    <div className="filter-group"><label className="filter-label">發行商</label><input className="filter-input" value=${formData.publisher || ''} onInput=${e => handleChange('publisher', e.target.value)} onMouseDown=${stopPropagation} /></div>
                     
                     <div className="filter-group" style=${{ borderTop: '1px solid #eee', paddingTop: 20 }}>
                         <label className="filter-label">演員</label>
                         <${ActorSelector} selectedActors=${selectedActors} onChange=${setSelectedActors} inputValue=${actorInputValue} onInputChange=${setActorInputValue} />
                     </div>
-                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="text" inputMode="decimal" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopProp} placeholder="請輸入評分 (例如 4.5)" /></div>
+                    <div className="filter-group"><label className="filter-label">評分 (最高5分)</label><input type="text" inputMode="decimal" className="filter-input" value=${formData.rating || ''} onInput=${e => handleChange('rating', e.target.value)} onMouseDown=${stopPropagation} placeholder="請輸入評分 (例如 4.5)" /></div>
                     
                     <div className="filter-group" style=${{ padding: '8px 0', marginBottom: '8px' }}>
                         <label className="filter-label" style=${{ display: 'flex', alignItems: 'center', cursor: 'pointer', margin: 0 }}>
@@ -1293,7 +1261,7 @@ function WorkEditor({ initialWorkId, onCancel, onSaveSuccess, setIsLoading }) {
                             style=${{ minHeight: '120px', resize: 'vertical', width: '100%', lineHeight: '1.5', fontFamily: 'inherit' }} 
                             value=${formData.notes || ''} 
                             onInput=${e => handleChange('notes', e.target.value)} 
-                            onMouseDown=${stopProp}
+                            onMouseDown=${stopPropagation}
                             placeholder="請輸入註解..." 
                         />
                     </div>
@@ -1378,11 +1346,7 @@ function WorkCard({ work, onClick }) {
 }
 
 module.exports = {
-    TagFilterSidebar,
-    ActorFilter,
     WorkSidebar,
-    ActorSelector,
-    TagSelector,
     WorkDetails,
     WorkEditor,
     WorkCard

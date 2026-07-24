@@ -5,10 +5,7 @@ const { screen, BrowserWindow } = require('@electron/remote');
 const { Globe, PlayCircle, Loader2, Download, X } = require('lucide-react');
 const { stopPropagation } = require('../utils/helpers');
 
-// 4. 網路抓取模組 (Web Scraper)
-
-// 圖片下載請求使用的桌面瀏覽器 User-Agent (僅用於 downloadImage 的 HTTP 標頭, 不影響 BrowserWindow 本身)
-const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// 網路抓取模組 (Web Scraper) — javlibrary 作品資料
 
 async function openJavScraperWindow(keyword) {
     let url = keyword;
@@ -519,4 +516,4 @@ function ScraperModal({ defaultUrl, onConfirm, onClose }) {
         </div>`;
 }
 
-module.exports = { ScraperModal, openJavScraperWindow, extractJavDataFromWindow, DESKTOP_USER_AGENT };
+module.exports = { ScraperModal, openJavScraperWindow, extractJavDataFromWindow };

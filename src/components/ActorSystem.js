@@ -10,17 +10,10 @@ const {
     Globe, Loader2, StopCircle, ArrowUpDown
 } = require('lucide-react');
 
-// 反轉排序方向 (asc <-> desc)
-const toggleSortDirection = (order) => {
-    if (order.endsWith('_asc')) return order.slice(0, -4) + '_desc';
-    if (order.endsWith('_desc')) return order.slice(0, -5) + '_asc';
-    return order;
-};
-
 const { db, actorsImgDir } = require('../utils/db');
-// 引入 findSmartMatchActor 與 parseNameWithAliases
 const {
-    getFileUrl, getNewActorNumber, parseSearchQuery, stopPropagation, findSmartMatchActor, parseNameWithAliases
+    getFileUrl, getNewActorNumber, parseSearchQuery, stopPropagation,
+    findSmartMatchActor, parseNameWithAliases, splitList, toggleSortDirection
 } = require('../utils/helpers');
 const {
     ConfirmModal, Modal, ImageViewerModal, Pagination, SearchHelpText
@@ -104,9 +97,9 @@ async function scrapeAndUpdateActor(actor) {
     return result;
 }
 
-// 6. 演員系統元件 (Actor System)
+// 演員系統元件 (Actor System)
 
-function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFavorite, onSearch }) {
+function ActorCard({ actor, onEdit, onDelete, onMerge, onOpenDetail, onToggleFavorite }) {
     const [showMenu, setShowMenu] = React.useState(false);
     const menuRef = React.useRef(null);
     const [imageError, setImageError] = React.useState(false);
@@ -189,7 +182,7 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
 
     // 別名動態清單操作 (預設一欄，可自行增減)
     const splitAliases = (str) => {
-        const arr = (str || "").split(/[,，]/).map(s => s.trim()).filter(s => s);
+        const arr = splitList(str);
         return arr.length ? arr : [""];
     };
     const cleanAliases = (arr) => arr.map(s => s.trim()).filter(s => s);
@@ -257,15 +250,13 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
         const rawName = name.trim();
         if (!rawName) return alert('請輸入姓名');
 
-        // Feature: 自動解析名稱中的括號內容
-        // 修改: 括號別名歸入「自訂別名」, 名稱保留括號顯示
-        const parsed = parseNameWithAliases(rawName);
-        const finalName = rawName; // 使用原始名稱 (包含括號)
-        const extractedAliases = parsed.aliases;
+        // 名稱中的括號內容視為別名: 歸入「自訂別名」, 顯示名稱則保留括號
+        const finalName = rawName;
+        const extractedAliases = parseNameWithAliases(rawName).aliases;
 
         // 自訂別名 = 表單輸入 + 名稱括號別名; 去重, 並排除與「自動別名」完全一致者 (沿用自動欄位)
         const currentCustom = cleanAliases(aliasItems);
-        const autoList = (autoAliases || '').split(/[,，]/).map(s => s.trim()).filter(s => s);
+        const autoList = splitList(autoAliases);
         const mergedCustom = [...new Set([...currentCustom, ...extractedAliases])]
             .filter(a => !autoList.includes(a))
             .join(',');
@@ -343,8 +334,8 @@ function ActorEditModal({ actorId, onClose, onSaveSuccess, setIsLoading }) {
                 <div className="filter-group">
                     <label className="filter-label">別名 (自動抓取) <span style=${{fontSize:'12px', color:'#888', fontWeight:'normal'}}>唯讀・由線上抓取管理</span></label>
                     <div className="filter-input" style=${{ backgroundColor: '#eee', minHeight: '38px', display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', cursor: 'not-allowed' }}>
-                        ${autoAliases && autoAliases.split(/[,，]/).map(s => s.trim()).filter(s => s).length > 0
-                            ? autoAliases.split(/[,，]/).map(s => s.trim()).filter(s => s).map((a, i) => html`<span key=${i} style=${{ fontSize: '13px', padding: '2px 8px', borderRadius: '10px', backgroundColor: '#fff', border: '1px solid #ddd', color: '#555' }}>${a}</span>`)
+                        ${splitList(autoAliases).length > 0
+                            ? splitList(autoAliases).map((a, i) => html`<span key=${i} style=${{ fontSize: '13px', padding: '2px 8px', borderRadius: '10px', backgroundColor: '#fff', border: '1px solid #ddd', color: '#555' }}>${a}</span>`)
                             : html`<span style=${{ color: '#aaa' }}>—</span>`}
                     </div>
                 </div>
@@ -437,15 +428,12 @@ function MergeActorModal({ sourceActor, onClose, onMergeSuccess }) {
             db.transaction(() => {
                 // 1. 處理別名: 來源的本名 / 別名 / 自訂別名 併入「目標的自訂別名 (custom_aliases)」。
                 //    與目標「自動別名 (aliases)」完全一致者略過 (沿用自動欄位); 自訂別名不受抓取覆蓋。
-                const targetAutoAliases = targetActor.aliases ? targetActor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
-                const targetCustom = targetActor.custom_aliases ? targetActor.custom_aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+                const targetAutoAliases = splitList(targetActor.aliases);
+                const targetCustom = splitList(targetActor.custom_aliases);
 
-                const incoming = [sourceActor.name];
-                if (sourceActor.aliases) incoming.push(...sourceActor.aliases.split(/[,，]/));
-                if (sourceActor.custom_aliases) incoming.push(...sourceActor.custom_aliases.split(/[,，]/));
+                const incoming = [sourceActor.name.trim(), ...splitList(sourceActor.aliases), ...splitList(sourceActor.custom_aliases)];
 
-                for (const raw of incoming) {
-                    const v = (raw || '').trim();
+                for (const v of incoming) {
                     if (!v) continue;
                     if (targetAutoAliases.includes(v)) continue; // 與自動別名完全一致 -> 沿用自動欄位
                     if (targetCustom.includes(v)) continue;       // 已在自訂別名中
@@ -716,9 +704,9 @@ function ActorDetail({ actorId, onBack, onNavigateToWorkDetails, setIsLoading })
     }
     const hasImg = imgSrc && !imageError;
 
-    const aliasList = actor.aliases ? actor.aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
-    const customAliasList = actor.custom_aliases ? actor.custom_aliases.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
-    const tagList = actor.tags ? actor.tags.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+    const aliasList = splitList(actor.aliases);
+    const customAliasList = splitList(actor.custom_aliases);
+    const tagList = splitList(actor.tags);
 
     const labelStyle = { width: '110px', flexShrink: 0, color: '#888', fontSize: '14px', fontWeight: 'bold' };
     const rowStyle = { display: 'flex', alignItems: 'flex-start', padding: '10px 0', borderBottom: '1px solid #f0f0f0' };
@@ -911,7 +899,7 @@ function ScrapeCandidateModal({ actorName, candidates, onPick, onResearch, onClo
 }
 
 function ActorSystem({
-    setIsLoading, onNavigateToWork, onNavigateToWorkDetails,
+    setIsLoading, onNavigateToWorkDetails,
     uiFilters, setUiFilters,
     appliedFilters, setAppliedFilters,
     sortOrder, setSortOrder,
@@ -928,7 +916,6 @@ function ActorSystem({
     const [editingActorId, setEditingActorId] = React.useState(null);
     const [mergingActor, setMergingActor] = React.useState(null);
     const [isModalOpen, setIsModalOpen] = React.useState(false);
-    const [viewingImage, setViewingImage] = React.useState(null);
     const [totalItems, setTotalItems] = React.useState(0);
     const [totalPages, setTotalPages] = React.useState(1);
     const [scrapeProgress, setScrapeProgress] = React.useState(null); // null | { total, current, name, ok, fail, done, cancelled, failures }
@@ -1003,7 +990,7 @@ function ActorSystem({
                     if (appliedFilters.code) {
                         const query = parseSearchQuery(appliedFilters.code, 'actor_number');
                         if (query.sql) {
-                            conditions.push(query.sql.replace(/^\s*AND\s+/, ''));
+                            conditions.push(query.sql);
                             params.push(...query.params);
                         }
                     }
@@ -1313,7 +1300,6 @@ function ActorSystem({
                             onDelete=${handleDelete}
                             onOpenDetail=${(id) => setDetailActorId(id)}
                             onToggleFavorite=${handleToggleFavorite}
-                            onSearch=${onNavigateToWork} 
                         />
                     `)}
                 </div>
@@ -1323,7 +1309,6 @@ function ActorSystem({
             </div>
             ${isModalOpen && html`<${ActorEditModal} actorId=${editingActorId} setIsLoading=${setIsLoading} onClose=${() => setIsModalOpen(false)} onSaveSuccess=${loadActors} />`}
             ${mergingActor && html`<${MergeActorModal} sourceActor=${mergingActor} onClose=${() => setMergingActor(null)} onMergeSuccess=${loadActors} />`}
-            ${viewingImage && html`<${ImageViewerModal} src=${viewingImage} onClose=${() => setViewingImage(null)} />`}
             ${scrapeProgress && html`<${ScrapeProgressModal} progress=${scrapeProgress}
                 onStop=${() => { scrapeCancelRef.current = true; }}
                 onClose=${() => setScrapeProgress(null)} />`}
